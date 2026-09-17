@@ -12,7 +12,16 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import importlib
 from nifty_analytics import NiftyAnalyticsEngine
+
+# Hot-reload safety for dynamically modified modules on Streamlit Cloud
+try:
+    import local_data_automation
+    if not hasattr(local_data_automation, "render_nifty_downloader_section"):
+        local_data_automation = importlib.reload(local_data_automation)
+except Exception:
+    pass
 
 # =============================================================
 # PAGE CONFIGURATION & SLEEK THEME
@@ -718,13 +727,40 @@ elif nav_selection == "📐 Section 3: RSI Custom Divergence Backtest":
     render_rsi_divergence_section(analytics_engine)
 
 elif nav_selection == "📥 Section 4: Nifty 500 Automated Data Downloader":
-    from local_data_automation import render_downloader_section
-    render_downloader_section()
+    try:
+        import local_data_automation
+        if not hasattr(local_data_automation, "render_downloader_section"):
+            import importlib
+            local_data_automation = importlib.reload(local_data_automation)
+        local_data_automation.render_downloader_section()
+    except Exception as e:
+        st.error(f"### ⚠️ Failed to load Section 4: {e}")
+        st.info("💡 **Tip**: If you recently updated the app, please click **'Manage app'** (lower-right corner) ➔ **'Reboot app'**.")
+        import traceback
+        st.code(traceback.format_exc(), language="python")
 
 elif nav_selection == "🔍 Section 5: Nifty 500 Multi-Stock Divergence Scanner":
-    from local_data_automation import render_scanner_section
-    render_scanner_section()
+    try:
+        import local_data_automation
+        if not hasattr(local_data_automation, "render_scanner_section"):
+            import importlib
+            local_data_automation = importlib.reload(local_data_automation)
+        local_data_automation.render_scanner_section()
+    except Exception as e:
+        st.error(f"### ⚠️ Failed to load Section 5: {e}")
+        st.info("💡 **Tip**: If you recently updated the app, please click **'Manage app'** (lower-right corner) ➔ **'Reboot app'**.")
+        import traceback
+        st.code(traceback.format_exc(), language="python")
 
 elif nav_selection == "⚡ Section 6: Nifty Automated Data Downloader":
-    from local_data_automation import render_nifty_downloader_section
-    render_nifty_downloader_section()
+    try:
+        import local_data_automation
+        if not hasattr(local_data_automation, "render_nifty_downloader_section"):
+            import importlib
+            local_data_automation = importlib.reload(local_data_automation)
+        local_data_automation.render_nifty_downloader_section()
+    except Exception as e:
+        st.error(f"### ⚠️ Failed to load Section 6: {e}")
+        st.info("💡 **Tip**: If you recently updated the app on Streamlit Cloud, please click **'Manage app'** (lower-right corner) ➔ **'Reboot app'** to reload newly deployed modules.")
+        import traceback
+        st.code(traceback.format_exc(), language="python")
