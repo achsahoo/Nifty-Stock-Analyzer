@@ -811,22 +811,46 @@ def sync_nifty_1min_data(tv, sync_mode="incremental"):
     # Merge and deduplicate
     try:
         if pl is not None:
-            df_new_pl = pl.from_pandas(df_new)
-            df_combined = pl.concat([df_existing, df_new_pl]).unique(subset=['date'], keep='last').sort('date')
-            new_last_dt = pd.to_datetime(df_combined['date'].max())
-            total_rows = len(df_combined)
-            
-            # Save to primary
-            os.makedirs(os.path.dirname(LOCAL_NIFTY_1MIN_FILE), exist_ok=True)
-            df_combined.write_parquet(LOCAL_NIFTY_1MIN_FILE)
-            
-            # Save to secondary / alternate paths
-            for alt_p in ALT_NIFTY_1MIN_FILES:
-                try:
-                    if os.path.exists(os.path.dirname(alt_p)) and os.path.abspath(alt_p) != os.path.abspath(LOCAL_NIFTY_1MIN_FILE):
-                        df_combined.write_parquet(alt_p)
-                except Exception:
-                    pass
+            try:
+                df_new_pl = pl.from_pandas(df_new)
+                # Auto-align schema types (e.g. Datetime('us') vs Datetime('ns')) to match existing dataset
+                for col, dtype in df_existing.schema.items():
+                    if col in df_new_pl.columns and df_new_pl.schema[col] != dtype:
+                        df_new_pl = df_new_pl.with_columns(pl.col(col).cast(dtype))
+
+                df_combined = pl.concat([df_existing, df_new_pl]).unique(subset=['date'], keep='last').sort('date')
+                new_last_dt = pd.to_datetime(df_combined['date'].max())
+                total_rows = len(df_combined)
+                
+                # Save to primary
+                os.makedirs(os.path.dirname(LOCAL_NIFTY_1MIN_FILE), exist_ok=True)
+                df_combined.write_parquet(LOCAL_NIFTY_1MIN_FILE)
+                
+                # Save to secondary / alternate paths
+                for alt_p in ALT_NIFTY_1MIN_FILES:
+                    try:
+                        if os.path.exists(os.path.dirname(alt_p)) and os.path.abspath(alt_p) != os.path.abspath(LOCAL_NIFTY_1MIN_FILE):
+                            df_combined.write_parquet(alt_p)
+                    except Exception:
+                        pass
+            except Exception as e_pl:
+                # Resilient fallback to pandas if polars encounters any schema/conversion conflict
+                df_ex_pd = df_existing.to_pandas() if hasattr(df_existing, "to_pandas") else df_existing
+                df_combined = pd.concat([df_ex_pd, df_new], ignore_index=True)
+                df_combined.drop_duplicates(subset=['date'], keep='last', inplace=True)
+                df_combined.sort_values('date', inplace=True)
+                df_combined.reset_index(drop=True, inplace=True)
+                new_last_dt = df_combined['date'].max()
+                total_rows = len(df_combined)
+                
+                os.makedirs(os.path.dirname(LOCAL_NIFTY_1MIN_FILE), exist_ok=True)
+                df_combined.to_parquet(LOCAL_NIFTY_1MIN_FILE, index=False)
+                for alt_p in ALT_NIFTY_1MIN_FILES:
+                    try:
+                        if os.path.exists(os.path.dirname(alt_p)) and os.path.abspath(alt_p) != os.path.abspath(LOCAL_NIFTY_1MIN_FILE):
+                            df_combined.to_parquet(alt_p, index=False)
+                    except Exception:
+                        pass
         else:
             df_combined = pd.concat([df_existing, df_new], ignore_index=True)
             df_combined.drop_duplicates(subset=['date'], keep='last', inplace=True)
