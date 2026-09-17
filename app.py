@@ -111,7 +111,8 @@ with st.sidebar:
         "🔄 Section 2: First-Touch Stretch & Reversals",
         "📐 Section 3: RSI Custom Divergence Backtest",
         "📥 Section 4: Nifty 500 Automated Data Downloader",
-        "🔍 Section 5: Nifty 500 Multi-Stock Divergence Scanner"
+        "🔍 Section 5: Nifty 500 Multi-Stock Divergence Scanner",
+        "⚡ Section 6: Nifty Automated Data Downloader"
     ]
     
     default_nav_idx = 0
@@ -723,3 +724,7 @@ elif nav_selection == "📥 Section 4: Nifty 500 Automated Data Downloader":
 elif nav_selection == "🔍 Section 5: Nifty 500 Multi-Stock Divergence Scanner":
     from local_data_automation import render_scanner_section
     render_scanner_section()
+
+elif nav_selection == "⚡ Section 6: Nifty Automated Data Downloader":
+    from local_data_automation import render_nifty_downloader_section
+    render_nifty_downloader_section()
