@@ -738,6 +738,23 @@ def render_rsi_divergence_section(analytics_engine):
         pct_wrong = (num_wrong / num_skips * 100.0) if num_skips > 0 else 0.0
         net_pts_saved = -float(skipped_df['pnl_pts'].sum())
         
+        # Directional Breakdown of Skipped Signals
+        buy_skips = skipped_df[skipped_df['action'] == 'BUY']
+        num_buy_skips = len(buy_skips)
+        buy_correct = int((buy_skips['is_correct_skip'] == True).sum()) if num_buy_skips > 0 else 0
+        buy_wrong = int((buy_skips['is_correct_skip'] == False).sum()) if num_buy_skips > 0 else 0
+        buy_corr_pct = (buy_correct / num_buy_skips * 100.0) if num_buy_skips > 0 else 0.0
+        buy_wrng_pct = (buy_wrong / num_buy_skips * 100.0) if num_buy_skips > 0 else 0.0
+        net_pts_buy = -float(buy_skips['pnl_pts'].sum()) if num_buy_skips > 0 else 0.0
+
+        sell_skips = skipped_df[skipped_df['action'] == 'SELL']
+        num_sell_skips = len(sell_skips)
+        sell_correct = int((sell_skips['is_correct_skip'] == True).sum()) if num_sell_skips > 0 else 0
+        sell_wrong = int((sell_skips['is_correct_skip'] == False).sum()) if num_sell_skips > 0 else 0
+        sell_corr_pct = (sell_correct / num_sell_skips * 100.0) if num_sell_skips > 0 else 0.0
+        sell_wrng_pct = (sell_wrong / num_sell_skips * 100.0) if num_sell_skips > 0 else 0.0
+        net_pts_sell = -float(sell_skips['pnl_pts'].sum()) if num_sell_skips > 0 else 0.0
+        
         orig_wr = all_stats.get('win_rate', 0.0)
         wr_delta = win_rate - orig_wr
         orig_pnl = all_stats.get('total_pnl_pts', 0.0)
@@ -747,9 +764,9 @@ def render_rsi_divergence_section(analytics_engine):
         with sk1:
             st.markdown(f"""<div class='metric-card'><span class='metric-label'>Total Skipped</span><div class='metric-value' style='color:#fbbf24;'>{num_skips}</div><span style='font-size:11px;color:#94a3b8;'>{num_skips/total_raw_signals*100:.1f}% of {total_raw_signals} Signals</span></div>""", unsafe_allow_html=True)
         with sk2:
-            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Correct Skips</span><div class='metric-value' style='color:#00d26a;'>{num_correct}</div><span style='font-size:11px;color:#94a3b8;'>🟢 {pct_correct:.1f}% Saved Losses</span></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Correct Skips</span><div class='metric-value' style='color:#00d26a;'>{num_correct}</div><span style='font-size:11px;color:#94a3b8;'>🟢 BUY: {buy_correct} | 🔴 SELL: {sell_correct}</span></div>""", unsafe_allow_html=True)
         with sk3:
-            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Wrong Skips</span><div class='metric-value' style='color:#ef4444;'>{num_wrong}</div><span style='font-size:11px;color:#94a3b8;'>🔴 {pct_wrong:.1f}% Missed Wins</span></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Wrong Skips</span><div class='metric-value' style='color:#ef4444;'>{num_wrong}</div><span style='font-size:11px;color:#94a3b8;'>🟢 BUY: {buy_wrong} | 🔴 SELL: {sell_wrong}</span></div>""", unsafe_allow_html=True)
         with sk4:
             acc_col = "#00d26a" if pct_correct >= 50 else "#f8312f"
             st.markdown(f"""<div class='metric-card'><span class='metric-label'>Filter Accuracy</span><div class='metric-value' style='color:{acc_col};'>{pct_correct:.1f}%</div><span style='font-size:11px;color:#94a3b8;'>Loss Prevention Rate</span></div>""", unsafe_allow_html=True)
@@ -759,6 +776,36 @@ def render_rsi_divergence_section(analytics_engine):
         with sk6:
             wr_d_col = "#00d26a" if wr_delta >= 0 else "#ef4444"
             st.markdown(f"""<div class='metric-card'><span class='metric-label'>Win Rate Delta</span><div class='metric-value' style='color:{wr_d_col};'>{wr_delta:+.1f}%</div><span style='font-size:11px;color:#94a3b8;'>{orig_wr:.1f}% ➔ {win_rate:.1f}%</span></div>""", unsafe_allow_html=True)
+
+        # Directional Accuracy Breakdown (BUY vs SELL)
+        st.markdown("##### 📊 BUY vs. SELL Skipped Signals Accuracy & Distribution")
+        dir_breakdown_df = pd.DataFrame([
+            {
+                'Signal Direction': f'🟢 BUY Divergences (Close > {ema_period} EMA)',
+                'Total Skipped': f"{num_buy_skips}",
+                '🟢 Correct Skips (Saved Loss)': f"{buy_correct} ({buy_corr_pct:.1f}%)",
+                '🔴 Wrong Skips (Missed Win)': f"{buy_wrong} ({buy_wrng_pct:.1f}%)",
+                'Accuracy (%)': f"{buy_corr_pct:.1f}%",
+                f'Net Points Saved ({pts_label})': f"{net_pts_buy:+,.1f}"
+            },
+            {
+                'Signal Direction': f'🔴 SELL Divergences (Close < {ema_period} EMA)',
+                'Total Skipped': f"{num_sell_skips}",
+                '🟢 Correct Skips (Saved Loss)': f"{sell_correct} ({sell_corr_pct:.1f}%)",
+                '🔴 Wrong Skips (Missed Win)': f"{sell_wrong} ({sell_wrng_pct:.1f}%)",
+                'Accuracy (%)': f"{sell_corr_pct:.1f}%",
+                f'Net Points Saved ({pts_label})': f"{net_pts_sell:+,.1f}"
+            },
+            {
+                'Signal Direction': '🔥 Combined Total Skipped',
+                'Total Skipped': f"{num_skips}",
+                '🟢 Correct Skips (Saved Loss)': f"{num_correct} ({pct_correct:.1f}%)",
+                '🔴 Wrong Skips (Missed Win)': f"{num_wrong} ({pct_wrong:.1f}%)",
+                'Accuracy (%)': f"{pct_correct:.1f}%",
+                f'Net Points Saved ({pts_label})': f"{net_pts_saved:+,.1f}"
+            }
+        ])
+        st.dataframe(dir_breakdown_df, width="stretch", hide_index=True)
 
         # Comparative Side-by-Side Summary
         comp_df = pd.DataFrame([
