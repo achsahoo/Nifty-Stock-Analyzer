@@ -644,8 +644,8 @@ def run_divergence_scanner(
             scan_prog.progress((idx + 1) / total_files)
             scan_status.markdown(f"🔍 Scanned **{idx+1}/{total_files}** stocks | Found **{len(signals_found)}** divergences...")
             
-        scan_status.empty()
-        scan_prog.empty()
+    scan_status.empty()
+    scan_prog.empty()
     
     if signals_found:
         df_out = pd.DataFrame(signals_found)
