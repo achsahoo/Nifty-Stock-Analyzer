@@ -27,6 +27,34 @@ def get_available_stock_symbols():
     ]
     return sorted(symbols)
 
+# =============================================================
+# BENCHMARK BLUE-CHIP CONSTITUENTS & PORTFOLIO RESOLVER
+# =============================================================
+NIFTY_50_BENCHMARK_SYMBOLS = [
+    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK",
+    "LT", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI", "HCLTECH", "SUNPHARMA", "TITAN", "ULTRACEMCO", "TATAMOTORS",
+    "NTPC", "POWERGRID", "ONGC", "JSWSTEEL", "ADANIENT", "ADANIPORTS", "COALINDIA", "TATASTEEL", "BAJAJFINSV", "M&M",
+    "GRASIM", "TECHM", "NESTLEIND", "CIPLA", "WIPRO", "HINDALCO", "DRREDDY", "EICHERMOT", "BPCL", "APOLLOHOSP",
+    "BRITANNIA", "TATACONSUM", "SBILIFE", "DIVISLAB", "HEROMOTOCO", "BAJAJ-AUTO", "LTIM", "HDFCLIFE", "SHRIRAMFIN", "BEL"
+]
+
+def get_portfolio_universe_symbols(scope: str, available_stocks: list) -> list:
+    """Returns the subset of stock symbols matching the selected scope."""
+    if "Top 50" in scope:
+        matched = [s for s in NIFTY_50_BENCHMARK_SYMBOLS if s in available_stocks]
+        if len(matched) < 50:
+            remaining = [s for s in available_stocks if s not in matched]
+            matched.extend(remaining[:50 - len(matched)])
+        return matched[:50]
+    elif "Top 100" in scope:
+        top50 = [s for s in NIFTY_50_BENCHMARK_SYMBOLS if s in available_stocks]
+        remaining = [s for s in available_stocks if s not in top50]
+        return (top50 + remaining)[:100]
+    elif "All Nifty 500" in scope:
+        return available_stocks
+    return available_stocks[:50]
+
+
 @st.cache_data(show_spinner=False)
 def load_asset_ohlc(asset_name: str, timeframe: str) -> pd.DataFrame:
     """
@@ -35,37 +63,41 @@ def load_asset_ohlc(asset_name: str, timeframe: str) -> pd.DataFrame:
     - Stocks: from D:\\NIFTY_MODEL\\stock_daily_parquet and stock_weekly_parquet
     - Monthly: aggregated from daily
     """
-    if asset_name == "NIFTY 50":
-        if timeframe == "Daily":
-            p = os.path.join(NIFTY_PARQUET_DIR, "nifty_daily_data_raw.parquet")
-            df = pd.read_parquet(p)
-        elif timeframe == "Weekly":
-            p = os.path.join(NIFTY_PARQUET_DIR, "nifty_weekly_data_raw.parquet")
-            df = pd.read_parquet(p)
-        else: # Monthly
-            p = os.path.join(NIFTY_PARQUET_DIR, "nifty_daily_data_raw.parquet")
-            df_d = pd.read_parquet(p)
-            df_d['datetime'] = pd.to_datetime(df_d['datetime'])
-            df = df_d.set_index('datetime').resample('ME').agg({
-                'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
-            }).dropna().reset_index()
-    else: # Stock
-        if timeframe == "Daily":
-            p = os.path.join(STOCK_DAILY_DIR, f"{asset_name}_daily_data_raw.parquet")
-            df = pd.read_parquet(p)
-        elif timeframe == "Weekly":
-            p = os.path.join(STOCK_WEEKLY_DIR, f"{asset_name}_weekly_data_raw.parquet")
-            df = pd.read_parquet(p)
-        else: # Monthly
-            p = os.path.join(STOCK_DAILY_DIR, f"{asset_name}_daily_data_raw.parquet")
-            df_d = pd.read_parquet(p)
-            df_d['datetime'] = pd.to_datetime(df_d['datetime'])
-            df = df_d.set_index('datetime').resample('ME').agg({
-                'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
-            }).dropna().reset_index()
+    try:
+        if asset_name == "NIFTY 50":
+            if timeframe == "Daily":
+                p = os.path.join(NIFTY_PARQUET_DIR, "nifty_daily_data_raw.parquet")
+                df = pd.read_parquet(p)
+            elif timeframe == "Weekly":
+                p = os.path.join(NIFTY_PARQUET_DIR, "nifty_weekly_data_raw.parquet")
+                df = pd.read_parquet(p)
+            else: # Monthly
+                p = os.path.join(NIFTY_PARQUET_DIR, "nifty_daily_data_raw.parquet")
+                df_d = pd.read_parquet(p)
+                df_d['datetime'] = pd.to_datetime(df_d['datetime'])
+                df = df_d.set_index('datetime').resample('ME').agg({
+                    'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
+                }).dropna().reset_index()
+        else: # Stock
+            if timeframe == "Daily":
+                p = os.path.join(STOCK_DAILY_DIR, f"{asset_name}_daily_data_raw.parquet")
+                df = pd.read_parquet(p)
+            elif timeframe == "Weekly":
+                p = os.path.join(STOCK_WEEKLY_DIR, f"{asset_name}_weekly_data_raw.parquet")
+                df = pd.read_parquet(p)
+            else: # Monthly
+                p = os.path.join(STOCK_DAILY_DIR, f"{asset_name}_daily_data_raw.parquet")
+                df_d = pd.read_parquet(p)
+                df_d['datetime'] = pd.to_datetime(df_d['datetime'])
+                df = df_d.set_index('datetime').resample('ME').agg({
+                    'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
+                }).dropna().reset_index()
 
-    df['date'] = pd.to_datetime(df['datetime'])
-    return df.sort_values('date').reset_index(drop=True)
+        df['date'] = pd.to_datetime(df['datetime'])
+        return df.sort_values('date').reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
 
 # =============================================================
 # RSI CALCULATION (MATCHING PINESCRIPT ta.rsi WITH WILDER RMA)
@@ -444,8 +476,602 @@ def run_rsi_divergence_backtest(
     return df_active, stats_active, df_skipped, stats_all
 
 # =============================================================
+# PORTFOLIO AGGREGATE BACKTEST ENGINE (ALL STOCKS COMBINED)
+# =============================================================
+@st.cache_data(show_spinner=False)
+def run_portfolio_combined_backtest(
+    symbols_tuple: tuple,
+    timeframe: str,
+    sl_pct: float,
+    tgt_pct: float,
+    entry_mode: str,
+    price_basis: str,
+    rsi_len: int,
+    lb_left: int,
+    lb_right: int,
+    tol_val: float,
+    enable_ema_filter: bool,
+    ema_period: int,
+    start_date_str: str,
+    end_date_str: str
+):
+    """
+    Executes RSI Divergence backtesting across an entire universe of stocks.
+    Aggregates all individual trades into a portfolio-wide dataset.
+    """
+    start_dt = pd.to_datetime(start_date_str).date() if start_date_str else None
+    end_dt = pd.to_datetime(end_date_str).date() if end_date_str else None
+    
+    all_trades = []
+    all_skips = []
+    stock_stats_list = []
+    
+    for sym in symbols_tuple:
+        try:
+            raw_df = load_asset_ohlc(sym, timeframe)
+            if raw_df.empty or len(raw_df) < (rsi_len + lb_left + lb_right + 10):
+                continue
+            
+            df_calc, sig_df_full = detect_pivots_and_signals(
+                raw_df, rsi_len=rsi_len, lb_left=lb_left, lb_right=lb_right, tol=tol_val, price_basis=price_basis
+            )
+            
+            if enable_ema_filter:
+                df_calc['ema'] = df_calc['close'].ewm(span=int(ema_period), adjust=False).mean()
+                
+            if not sig_df_full.empty and start_dt and end_dt:
+                sig_df = sig_df_full[(sig_df_full['signal_date'].dt.date >= start_dt) & (sig_df_full['signal_date'].dt.date <= end_dt)].copy().reset_index(drop=True)
+            else:
+                sig_df = sig_df_full
+                
+            if sig_df.empty:
+                continue
+                
+            t_df, _, sk_df, _ = run_rsi_divergence_backtest(
+                df_calc, sig_df, sl_pct=sl_pct, tgt_pct=tgt_pct, entry_mode=entry_mode,
+                enable_ema_filter=enable_ema_filter, ema_period=int(ema_period)
+            )
+            
+            if not t_df.empty:
+                t_df['symbol'] = sym
+                all_trades.append(t_df)
+                
+                n_t = len(t_df)
+                n_w = int((t_df['win'] == True).sum())
+                wr = (n_w / n_t) * 100.0 if n_t > 0 else 0.0
+                pos_ret = t_df[t_df['pnl_pct'] > 0]['pnl_pct'].sum()
+                neg_ret = abs(t_df[t_df['pnl_pct'] < 0]['pnl_pct'].sum())
+                pf = (pos_ret / neg_ret) if neg_ret > 0 else (99.9 if pos_ret > 0 else 0.0)
+                
+                stock_stats_list.append({
+                    'Symbol': sym,
+                    'Trades': n_t,
+                    'Win Rate (%)': wr,
+                    'Wins': n_w,
+                    'Losses': n_t - n_w,
+                    'Profit Factor': pf,
+                    'Avg Return (%)': t_df['pnl_pct'].mean(),
+                    'Total Return (%)': t_df['pnl_pct'].sum(),
+                    'Best Trade (%)': t_df['pnl_pct'].max(),
+                    'Worst Trade (%)': t_df['pnl_pct'].min(),
+                    'Avg Holding (Bars)': t_df['holding_bars'].mean()
+                })
+                
+            if not sk_df.empty:
+                sk_df['symbol'] = sym
+                all_skips.append(sk_df)
+                
+        except Exception:
+            continue
+            
+    df_trades = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame()
+    df_skips = pd.concat(all_skips, ignore_index=True) if all_skips else pd.DataFrame()
+    df_stocks = pd.DataFrame(stock_stats_list)
+    
+    if not df_trades.empty:
+        df_trades['entry_date'] = pd.to_datetime(df_trades['entry_date'])
+        df_trades['exit_date'] = pd.to_datetime(df_trades['exit_date'])
+        df_trades['year'] = df_trades['entry_date'].dt.year
+        df_trades = df_trades.sort_values('exit_date').reset_index(drop=True)
+        
+        total_trades = len(df_trades)
+        wins = int((df_trades['win'] == True).sum())
+        losses = total_trades - wins
+        win_rate = (wins / total_trades) * 100.0 if total_trades > 0 else 0.0
+        
+        years = sorted(df_trades['year'].unique())
+        num_years = max(len(years), 1)
+        avg_yearly_signals = total_trades / num_years
+        
+        unique_stocks = df_trades['symbol'].nunique()
+        avg_signals_per_stock_yr = avg_yearly_signals / max(unique_stocks, 1)
+        
+        buy_t = df_trades[df_trades['action'] == 'BUY']
+        buy_wins = int((buy_t['win'] == True).sum())
+        buy_wr = (buy_wins / len(buy_t) * 100.0) if len(buy_t) > 0 else 0.0
+        
+        sell_t = df_trades[df_trades['action'] == 'SELL']
+        sell_wins = int((sell_t['win'] == True).sum())
+        sell_wr = (sell_wins / len(sell_t) * 100.0) if len(sell_t) > 0 else 0.0
+        
+        pos_rets = df_trades[df_trades['pnl_pct'] > 0]['pnl_pct'].sum()
+        neg_rets = abs(df_trades[df_trades['pnl_pct'] < 0]['pnl_pct'].sum())
+        pf = (pos_rets / neg_rets) if neg_rets > 0 else (99.9 if pos_rets > 0 else 0.0)
+        
+        port_stats = {
+            'total_trades': total_trades,
+            'total_wins': wins,
+            'total_losses': losses,
+            'win_rate': win_rate,
+            'active_years': years,
+            'num_years': num_years,
+            'avg_yearly_signals': avg_yearly_signals,
+            'unique_stocks': unique_stocks,
+            'avg_signals_per_stock_yr': avg_signals_per_stock_yr,
+            'buy_trades': len(buy_t),
+            'buy_wins': buy_wins,
+            'buy_win_rate': buy_wr,
+            'sell_trades': len(sell_t),
+            'sell_wins': sell_wins,
+            'sell_win_rate': sell_wr,
+            'avg_trade_pct': df_trades['pnl_pct'].mean(),
+            'total_return_pct': df_trades['pnl_pct'].sum(),
+            'profit_factor': pf,
+            'best_trade_pct': df_trades['pnl_pct'].max(),
+            'worst_trade_pct': df_trades['pnl_pct'].min(),
+            'avg_holding_bars': df_trades['holding_bars'].mean()
+        }
+    else:
+        port_stats = {}
+        
+    return df_trades, df_skips, df_stocks, port_stats
+
+
+def render_portfolio_combined_view(
+    symbols_to_run: list,
+    timeframe: str,
+    sl_val: float,
+    tgt_val: float,
+    entry_mode_key: str,
+    price_basis_arg: str,
+    rsi_len: int,
+    lb_left: int,
+    lb_right: int,
+    tol_val: float,
+    enable_ema_filter: bool,
+    ema_period: int,
+    start_f,
+    end_f,
+    scope_label: str
+):
+    """
+    Renders the comprehensive All Stocks Combined portfolio view for Section 3.
+    """
+    st.markdown("---")
+    st.markdown("### 🌐 All Stocks Combined Portfolio Backtest Engine")
+    basis_str = "🌅 Candle Open (Early)" if price_basis_arg == "open" else "📊 Candle Close (Standard)"
+    sl_str = f"{sl_val:.1f}% Fixed" if sl_val > 0 else "Dynamic Signal Low/High"
+    tgt_str = f"+{tgt_val:.2f}% Fixed" if tgt_val > 0 else "Open-Ended (Ride Trend)"
+    ema_str = f"Active ({ema_period} EMA)" if enable_ema_filter else "Disabled"
+    
+    st.markdown(f"""
+    <div style='background:rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 12px 18px; margin-bottom: 20px; font-size: 13px; color: #cbd5e1;'>
+        <strong>Universe Target:</strong> <span style='color:#38bdf8;'>{len(symbols_to_run)} Equities ({scope_label})</span> &nbsp;|&nbsp;
+        <strong>Timeframe:</strong> <span style='color:#38bdf8;'>{timeframe}</span> &nbsp;|&nbsp;
+        <strong>Date Window:</strong> <span style='color:#38bdf8;'>{start_f} to {end_f}</span> &nbsp;|&nbsp;
+        <strong>Signal Basis:</strong> <span style='color:#38bdf8;'>{basis_str}</span><br>
+        <strong>Stop Loss:</strong> <span style='color:#fbbf24;'>{sl_str}</span> &nbsp;|&nbsp;
+        <strong>Target:</strong> <span style='color:#00d26a;'>{tgt_str}</span> &nbsp;|&nbsp;
+        <strong>Anti-Chasing EMA Filter:</strong> <span style='color:#38bdf8;'>{ema_str}</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    with st.spinner(f"⚡ Backtesting RSI Divergence across {len(symbols_to_run)} equities ({timeframe})..."):
+        trades_df, skipped_df, stock_summary_df, port_stats = run_portfolio_combined_backtest(
+            symbols_tuple=tuple(symbols_to_run),
+            timeframe=timeframe,
+            sl_pct=sl_val,
+            tgt_pct=tgt_val,
+            entry_mode=entry_mode_key,
+            price_basis=price_basis_arg,
+            rsi_len=rsi_len,
+            lb_left=lb_left,
+            lb_right=lb_right,
+            tol_val=tol_val,
+            enable_ema_filter=enable_ema_filter,
+            ema_period=ema_period,
+            start_date_str=str(start_f),
+            end_date_str=str(end_f)
+        )
+        
+    if trades_df.empty or not port_stats:
+        st.warning(f"No executed trades found across the selected {len(symbols_to_run)} stocks within the active date window ({start_f} to {end_f}).")
+        if enable_ema_filter and not skipped_df.empty:
+            st.info(f"💡 Notice: The {ema_period} EMA filter skipped all {len(skipped_df)} divergence signals found across this universe.")
+        return
+        
+    # =============================================================
+    # 1. EXECUTIVE PORTFOLIO METRIC CARDS
+    # =============================================================
+    total_trades = port_stats['total_trades']
+    total_wins = port_stats['total_wins']
+    total_losses = port_stats['total_losses']
+    win_rate = port_stats['win_rate']
+    avg_yearly_signals = port_stats['avg_yearly_signals']
+    unique_stocks = port_stats['unique_stocks']
+    avg_per_stock_yr = port_stats['avg_signals_per_stock_yr']
+    num_years = port_stats['num_years']
+    years_range = f"{port_stats['active_years'][0]}–{port_stats['active_years'][-1]}" if port_stats['active_years'] else ""
+    
+    buy_trades = port_stats['buy_trades']
+    buy_wins = port_stats['buy_wins']
+    buy_wr = port_stats['buy_win_rate']
+    
+    sell_trades = port_stats['sell_trades']
+    sell_wins = port_stats['sell_wins']
+    sell_wr = port_stats['sell_win_rate']
+    
+    avg_trade_pct = port_stats['avg_trade_pct']
+    pf = port_stats['profit_factor']
+    pf_str = f"{pf:.2f}" if not np.isnan(pf) else "N/A"
+    
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    
+    wr_color = "#00d26a" if win_rate >= 50 else "#f8312f"
+    with m1:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Total Success Rate</span>
+            <div class='metric-value' style='color:{wr_color};'>{win_rate:.1f}%</div>
+            <span style='font-size:11px;color:#94a3b8;'>{total_wins:,} Wins / {total_losses:,} Losses</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m2:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Total Signals</span>
+            <div class='metric-value' style='color:#38bdf8;'>{total_trades:,}</div>
+            <span style='font-size:11px;color:#94a3b8;'>Across {unique_stocks} Equities ({timeframe})</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m3:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Avg Yearly Signals</span>
+            <div class='metric-value' style='color:#fbbf24;'>{avg_yearly_signals:.1f} / yr</div>
+            <span style='font-size:11px;color:#94a3b8;'>~{avg_per_stock_yr:.1f}/stock/yr ({years_range})</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m4:
+        b_col = "#00d26a" if buy_wr >= 50 else "#f8312f"
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>🟢 BUY Success Rate</span>
+            <div class='metric-value' style='color:{b_col};'>{buy_wr:.1f}%</div>
+            <span style='font-size:11px;color:#94a3b8;'>{buy_wins:,} Wins / {buy_trades:,} Signals</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m5:
+        s_col = "#00d26a" if sell_wr >= 50 else "#f8312f"
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>🔴 SELL Success Rate</span>
+            <div class='metric-value' style='color:{s_col};'>{sell_wr:.1f}%</div>
+            <span style='font-size:11px;color:#94a3b8;'>{sell_wins:,} Wins / {sell_trades:,} Signals</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m6:
+        avg_col = "#00d26a" if avg_trade_pct >= 0 else "#f8312f"
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Avg Trade Return</span>
+            <div class='metric-value' style='color:{avg_col};'>{avg_trade_pct:+.2f}%</div>
+            <span style='font-size:11px;color:#94a3b8;'>Profit Factor: {pf_str}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    # =============================================================
+    # 2. ANTI-CHASING EMA FILTER COLLECTIVE AUDIT (IF ACTIVE)
+    # =============================================================
+    if enable_ema_filter and not skipped_df.empty:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(f"### 🛡️ Anti-Chasing {ema_period} EMA Filter Impact (Portfolio Collective Audit)")
+        
+        num_skips = len(skipped_df)
+        all_combined = pd.concat([trades_df, skipped_df], ignore_index=True)
+        total_raw_signals = len(all_combined)
+        num_correct = int((skipped_df['is_correct_skip'] == True).sum())
+        num_wrong = int((skipped_df['is_correct_skip'] == False).sum())
+        pct_correct = (num_correct / num_skips * 100.0) if num_skips > 0 else 0.0
+        pct_wrong = (num_wrong / num_skips * 100.0) if num_skips > 0 else 0.0
+        net_saved_pct = -float(skipped_df['pnl_pct'].sum())
+        
+        # Directional Breakdown
+        buy_skips = skipped_df[skipped_df['action'] == 'BUY']
+        num_buy_skips = len(buy_skips)
+        buy_correct = int((buy_skips['is_correct_skip'] == True).sum()) if num_buy_skips > 0 else 0
+        buy_wrong = int((buy_skips['is_correct_skip'] == False).sum()) if num_buy_skips > 0 else 0
+        buy_corr_pct = (buy_correct / num_buy_skips * 100.0) if num_buy_skips > 0 else 0.0
+        buy_wrng_pct = (buy_wrong / num_buy_skips * 100.0) if num_buy_skips > 0 else 0.0
+        net_saved_buy = -float(buy_skips['pnl_pct'].sum()) if num_buy_skips > 0 else 0.0
+
+        sell_skips = skipped_df[skipped_df['action'] == 'SELL']
+        num_sell_skips = len(sell_skips)
+        sell_correct = int((sell_skips['is_correct_skip'] == True).sum()) if num_sell_skips > 0 else 0
+        sell_wrong = int((sell_skips['is_correct_skip'] == False).sum()) if num_sell_skips > 0 else 0
+        sell_corr_pct = (sell_correct / num_sell_skips * 100.0) if num_sell_skips > 0 else 0.0
+        sell_wrng_pct = (sell_wrong / num_sell_skips * 100.0) if num_sell_skips > 0 else 0.0
+        net_saved_sell = -float(sell_skips['pnl_pct'].sum()) if num_sell_skips > 0 else 0.0
+        
+        raw_wins = int((all_combined['win'] == True).sum())
+        orig_wr = (raw_wins / total_raw_signals * 100.0) if total_raw_signals > 0 else 0.0
+        wr_delta = win_rate - orig_wr
+        
+        sk1, sk2, sk3, sk4, sk5, sk6 = st.columns(6)
+        with sk1:
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Total Skipped</span><div class='metric-value' style='color:#fbbf24;'>{num_skips:,}</div><span style='font-size:11px;color:#94a3b8;'>{num_skips/total_raw_signals*100:.1f}% of {total_raw_signals:,} Signals</span></div>""", unsafe_allow_html=True)
+        with sk2:
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Correct Skips</span><div class='metric-value' style='color:#00d26a;'>{num_correct:,}</div><span style='font-size:11px;color:#94a3b8;'>🟢 BUY: {buy_correct:,} | 🔴 SELL: {sell_correct:,}</span></div>""", unsafe_allow_html=True)
+        with sk3:
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Wrong Skips</span><div class='metric-value' style='color:#ef4444;'>{num_wrong:,}</div><span style='font-size:11px;color:#94a3b8;'>🟢 BUY: {buy_wrong:,} | 🔴 SELL: {sell_wrong:,}</span></div>""", unsafe_allow_html=True)
+        with sk4:
+            acc_col = "#00d26a" if pct_correct >= 50 else "#f8312f"
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Filter Accuracy</span><div class='metric-value' style='color:{acc_col};'>{pct_correct:.1f}%</div><span style='font-size:11px;color:#94a3b8;'>Loss Prevention Rate</span></div>""", unsafe_allow_html=True)
+        with sk5:
+            saved_col = "#00d26a" if net_saved_pct >= 0 else "#ef4444"
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Net Return Saved</span><div class='metric-value' style='color:{saved_col};'>{net_saved_pct:+.1f}%</div><span style='font-size:11px;color:#94a3b8;'>Avoided Loss vs Missed Win</span></div>""", unsafe_allow_html=True)
+        with sk6:
+            wr_d_col = "#00d26a" if wr_delta >= 0 else "#ef4444"
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Portfolio WR Uplift</span><div class='metric-value' style='color:{wr_d_col};'>{wr_delta:+.1f}%</div><span style='font-size:11px;color:#94a3b8;'>{orig_wr:.1f}% ➔ {win_rate:.1f}%</span></div>""", unsafe_allow_html=True)
+
+        st.markdown("##### 📊 BUY vs. SELL Skipped Signals Accuracy & Distribution")
+        dir_breakdown_df = pd.DataFrame([
+            {
+                'Signal Direction': f'🟢 BUY Divergences (Close > {ema_period} EMA)',
+                'Total Skipped': f"{num_buy_skips:,}",
+                '🟢 Correct Skips (Saved Loss)': f"{buy_correct:,} ({buy_corr_pct:.1f}%)",
+                '🔴 Wrong Skips (Missed Win)': f"{buy_wrong:,} ({buy_wrng_pct:.1f}%)",
+                'Filter Accuracy': f"{buy_corr_pct:.1f}%",
+                'Net % Saved': f"{net_saved_buy:+.2f}%"
+            },
+            {
+                'Signal Direction': f'🔴 SELL Divergences (Close < {ema_period} EMA)',
+                'Total Skipped': f"{num_sell_skips:,}",
+                '🟢 Correct Skips (Saved Loss)': f"{sell_correct:,} ({sell_corr_pct:.1f}%)",
+                '🔴 Wrong Skips (Missed Win)': f"{sell_wrong:,} ({sell_wrng_pct:.1f}%)",
+                'Filter Accuracy': f"{sell_corr_pct:.1f}%",
+                'Net % Saved': f"{net_saved_sell:+.2f}%"
+            },
+            {
+                'Signal Direction': '🔥 Portfolio Combined Skipped',
+                'Total Skipped': f"{num_skips:,}",
+                '🟢 Correct Skips (Saved Loss)': f"{num_correct:,} ({pct_correct:.1f}%)",
+                '🔴 Wrong Skips (Missed Win)': f"{num_wrong:,} ({pct_wrong:.1f}%)",
+                'Filter Accuracy': f"{pct_correct:.1f}%",
+                'Net % Saved': f"{net_saved_pct:+.2f}%"
+            }
+        ])
+        st.dataframe(dir_breakdown_df, width="stretch", hide_index=True)
+        
+    # =============================================================
+    # 3. CALENDAR YEAR COMBINED PERFORMANCE BREAKDOWN
+    # =============================================================
+    st.markdown("### 📅 Calendar Year Combined Performance Breakdown")
+    trades_df['year'] = pd.to_datetime(trades_df['entry_date']).dt.year
+    
+    y_stats = []
+    for yr, y_df in trades_df.groupby('year'):
+        n_t = len(y_df)
+        w_t = int((y_df['win'] == True).sum())
+        wr = (w_t / n_t) * 100.0 if n_t > 0 else 0
+        avg_pct = y_df['pnl_pct'].mean()
+        cum_pct = y_df['pnl_pct'].sum()
+        
+        b_df = y_df[y_df['action'] == 'BUY']
+        n_b = len(b_df)
+        w_b = int((b_df['win'] == True).sum())
+        wr_b = f"{(w_b / n_b) * 100.0:.1f}% ({w_b}/{n_b})" if n_b > 0 else "-"
+        
+        s_df = y_df[y_df['action'] == 'SELL']
+        n_s = len(s_df)
+        w_s = int((s_df['win'] == True).sum())
+        wr_s = f"{(w_s / n_s) * 100.0:.1f}% ({w_s}/{n_s})" if n_s > 0 else "-"
+        
+        y_stats.append({
+            'Year': yr,
+            'Active Stocks': y_df['symbol'].nunique(),
+            'Total Signals': n_t,
+            'Wins': w_t,
+            'Losses': n_t - w_t,
+            'Combined Win Rate (%)': f"{wr:.1f}%",
+            '🟢 BUY Win Rate': wr_b,
+            '🔴 SELL Win Rate': wr_s,
+            'Avg Return (%)': f"{avg_pct:+.2f}%",
+            'Cumulative Return (%)': f"{cum_pct:+.1f}%",
+            'raw_signals': n_t,
+            'raw_wr': wr
+        })
+        
+    y_df_disp = pd.DataFrame(y_stats)
+    
+    yc1, yc2 = st.columns([1.5, 1.5])
+    with yc1:
+        st.dataframe(y_df_disp.drop(columns=['raw_signals', 'raw_wr']), width="stretch", hide_index=True)
+        
+    with yc2:
+        fig_y = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_y.add_trace(go.Bar(
+            x=y_df_disp['Year'],
+            y=y_df_disp['raw_signals'],
+            name="Signals Volume",
+            marker_color="#38bdf8",
+            opacity=0.75
+        ), secondary_y=False)
+        
+        fig_y.add_trace(go.Scatter(
+            x=y_df_disp['Year'],
+            y=y_df_disp['raw_wr'],
+            name="Combined Win Rate (%)",
+            mode="lines+markers",
+            line=dict(color="#00d26a", width=2.5),
+            marker=dict(size=6)
+        ), secondary_y=True)
+        
+        fig_y.add_hline(y=50, line_dash="dash", line_color="#ef4444", line_width=1, secondary_y=True)
+        fig_y.update_layout(
+            title="Yearly Signals Volume & Combined Success Rate",
+            template="plotly_dark",
+            height=340,
+            margin=dict(l=30, r=30, t=40, b=30),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_y, width="stretch")
+        
+    # =============================================================
+    # 4. STOCK-BY-STOCK PERFORMANCE MATRIX & LEADERBOARD
+    # =============================================================
+    st.markdown("### 🏆 Stock-by-Stock Performance Matrix & Leaderboard")
+    if not stock_summary_df.empty:
+        top_wr = stock_summary_df.sort_values(by=['Win Rate (%)', 'Trades'], ascending=False).head(3)
+        top_ret = stock_summary_df.sort_values(by='Total Return (%)', ascending=False).head(3)
+        
+        hl1, hl2 = st.columns(2)
+        with hl1:
+            st.markdown("**🥇 Top 3 Highest Win Rate Equities:**")
+            badges_wr = " &nbsp; ".join([f"<span style='background:rgba(0,210,106,0.15); border:1px solid #00d26a; padding:3px 8px; border-radius:4px; font-size:12px; color:#00d26a;'><strong>{row['Symbol']}</strong>: {row['Win Rate (%)']:.1f}% ({row['Trades']} signals)</span>" for _, row in top_wr.iterrows()])
+            st.markdown(badges_wr, unsafe_allow_html=True)
+        with hl2:
+            st.markdown("**🚀 Top 3 Highest Cumulative Return Equities:**")
+            badges_ret = " &nbsp; ".join([f"<span style='background:rgba(56,189,248,0.15); border:1px solid #38bdf8; padding:3px 8px; border-radius:4px; font-size:12px; color:#38bdf8;'><strong>{row['Symbol']}</strong>: {row['Total Return (%)']:+.1f}%</span>" for _, row in top_ret.iterrows()])
+            st.markdown(badges_ret, unsafe_allow_html=True)
+            
+        st.markdown("<br>", unsafe_allow_html=True)
+        disp_stocks = stock_summary_df.copy()
+        disp_stocks['Win Rate (%)'] = disp_stocks['Win Rate (%)'].map(lambda x: f"{x:.1f}%")
+        disp_stocks['Profit Factor'] = disp_stocks['Profit Factor'].map(lambda x: f"{x:.2f}" if not np.isnan(x) else "N/A")
+        disp_stocks['Avg Return (%)'] = disp_stocks['Avg Return (%)'].map(lambda x: f"{x:+.2f}%")
+        disp_stocks['Total Return (%)'] = disp_stocks['Total Return (%)'].map(lambda x: f"{x:+.1f}%")
+        disp_stocks['Best Trade (%)'] = disp_stocks['Best Trade (%)'].map(lambda x: f"{x:+.1f}%")
+        disp_stocks['Worst Trade (%)'] = disp_stocks['Worst Trade (%)'].map(lambda x: f"{x:+.1f}%")
+        disp_stocks['Avg Holding (Bars)'] = disp_stocks['Avg Holding (Bars)'].map(lambda x: f"{x:.1f}")
+        
+        st.dataframe(disp_stocks, width="stretch", hide_index=True)
+        
+    # =============================================================
+    # 5. CUMULATIVE PORTFOLIO GROWTH CURVE
+    # =============================================================
+    st.markdown("### 📈 Cumulative Portfolio Return & Drawdown Curve")
+    trades_df_sorted = trades_df.sort_values('exit_date').reset_index(drop=True)
+    trades_df_sorted['cum_pnl_pct'] = trades_df_sorted['pnl_pct'].cumsum()
+    trades_df_sorted['peak_pnl_pct'] = trades_df_sorted['cum_pnl_pct'].cummax()
+    trades_df_sorted['drawdown_pct'] = trades_df_sorted['cum_pnl_pct'] - trades_df_sorted['peak_pnl_pct']
+    
+    fig_peq = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3],
+        subplot_titles=("Cumulative Portfolio % Return Across All Executed Signals", "Portfolio Drawdown (%)")
+    )
+    
+    fig_peq.add_trace(go.Scatter(
+        x=trades_df_sorted['exit_date'],
+        y=trades_df_sorted['cum_pnl_pct'],
+        mode='lines',
+        name='Cumulative Return (%)',
+        line=dict(color='#00d26a', width=2.0)
+    ), row=1, col=1)
+    
+    fig_peq.add_trace(go.Scatter(
+        x=trades_df_sorted['exit_date'],
+        y=trades_df_sorted['peak_pnl_pct'],
+        mode='lines',
+        name='High Water Mark',
+        line=dict(color='#38bdf8', width=1, dash='dot')
+    ), row=1, col=1)
+    
+    fig_peq.add_trace(go.Scatter(
+        x=trades_df_sorted['exit_date'],
+        y=trades_df_sorted['drawdown_pct'],
+        mode='lines',
+        name='Drawdown Underwater',
+        fill='tozeroy',
+        line=dict(color='#ef4444', width=1.5),
+        fillcolor='rgba(239, 68, 68, 0.25)'
+    ), row=2, col=1)
+    
+    fig_peq.update_layout(
+        template="plotly_dark",
+        height=460,
+        margin=dict(l=40, r=40, t=40, b=30),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig_peq, width="stretch")
+    
+    # =============================================================
+    # 6. COMPLETE FILTERABLE EXECUTED TRADE LOG
+    # =============================================================
+    st.markdown("### 📋 Complete Portfolio Executed Trade Log")
+    fl1, fl2, fl3 = st.columns([1.5, 1.2, 1.2])
+    with fl1:
+        sym_options = ["All Equities"] + sorted(trades_df['symbol'].unique().tolist())
+        sel_sym = st.selectbox("Filter by Symbol:", sym_options, key="sec3_port_filt_sym")
+    with fl2:
+        sel_act = st.selectbox("Filter by Action:", ["All Actions", "BUY Only", "SELL Only"], key="sec3_port_filt_act")
+    with fl3:
+        sel_out = st.selectbox("Filter by Outcome:", ["All Outcomes", "Wins Only", "Losses Only"], key="sec3_port_filt_out")
+        
+    filt_df = trades_df.copy()
+    if sel_sym != "All Equities":
+        filt_df = filt_df[filt_df['symbol'] == sel_sym]
+    if sel_act == "BUY Only":
+        filt_df = filt_df[filt_df['action'] == 'BUY']
+    elif sel_act == "SELL Only":
+        filt_df = filt_df[filt_df['action'] == 'SELL']
+    if sel_out == "Wins Only":
+        filt_df = filt_df[filt_df['win'] == True]
+    elif sel_out == "Losses Only":
+        filt_df = filt_df[filt_df['win'] == False]
+        
+    disp_cols = ['symbol', 'signal_date', 'entry_date', 'exit_date', 'action', 'reason', 'entry_price', 'exit_price', 'exit_reason', 'holding_bars', 'pnl_pct']
+    
+    disp_t = filt_df[disp_cols].copy()
+    disp_t['signal_date'] = pd.to_datetime(disp_t['signal_date']).dt.strftime('%Y-%m-%d')
+    disp_t['entry_date'] = pd.to_datetime(disp_t['entry_date']).dt.strftime('%Y-%m-%d')
+    disp_t['exit_date'] = pd.to_datetime(disp_t['exit_date']).dt.strftime('%Y-%m-%d')
+    disp_t['entry_price'] = disp_t['entry_price'].map(lambda x: f"₹{x:,.2f}")
+    disp_t['exit_price'] = disp_t['exit_price'].map(lambda x: f"₹{x:,.2f}")
+    disp_t['pnl_pct'] = disp_t['pnl_pct'].map(lambda x: f"{x:+.2f}%")
+    disp_t = disp_t.rename(columns={
+        'symbol': 'Symbol',
+        'signal_date': 'Signal Date',
+        'entry_date': 'Entry Date',
+        'exit_date': 'Exit Date',
+        'action': 'Action',
+        'reason': 'Divergence Reason',
+        'entry_price': 'Entry Price',
+        'exit_price': 'Exit Price',
+        'exit_reason': 'Exit Reason',
+        'holding_bars': 'Holding Bars',
+        'pnl_pct': 'Return (%)'
+    })
+    st.dataframe(disp_t, width="stretch", hide_index=True)
+    
+    csv_bytes = trades_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label=f"📥 Download Full Portfolio ({len(trades_df):,} Trades) Log CSV",
+        data=csv_bytes,
+        file_name=f"portfolio_rsi_divergence_{timeframe.lower()}_trades.csv",
+        mime="text/csv",
+        key="btn_download_portfolio_trades_csv"
+    )
+
+# =============================================================
 # STREAMLIT UI COMPONENT FOR SECTION 4
 # =============================================================
+
 def render_rsi_divergence_section(analytics_engine):
     st.header("📐 Section 3: RSI Custom Divergence Backtest Engine")
     st.markdown("""
@@ -460,7 +1086,7 @@ def render_rsi_divergence_section(analytics_engine):
     with ac1:
         asset_type = st.radio(
             "Asset Universe:",
-            ["🇮🇳 NIFTY 50 (Index)", "📈 Individual Stocks (F&O Universe)"],
+            ["🇮🇳 NIFTY 50 (Index)", "📈 Individual Stock (Single Ticker)", "🌐 All Stocks Combined (Portfolio Aggregate)"],
             horizontal=True
         )
         
@@ -468,7 +1094,7 @@ def render_rsi_divergence_section(analytics_engine):
         if asset_type == "🇮🇳 NIFTY 50 (Index)":
             selected_asset = "NIFTY 50"
             st.markdown("<span style='font-size: 12px; color: #38bdf8;'>Data Source: <code>NIFTY 50 (Daily/Weekly Parquet 1990–2026)</code></span>", unsafe_allow_html=True)
-        else:
+        elif asset_type == "📈 Individual Stock (Single Ticker)":
             stocks = get_available_stock_symbols()
             if "selected_stock_override" in st.session_state and st.session_state["selected_stock_override"] in stocks:
                 def_stock_idx = stocks.index(st.session_state["selected_stock_override"])
@@ -476,16 +1102,41 @@ def render_rsi_divergence_section(analytics_engine):
                 def_stock_idx = stocks.index("INFY") if "INFY" in stocks else 0
             selected_asset = st.selectbox("Select Stock:", stocks, index=def_stock_idx)
             st.markdown(f"<span style='font-size: 12px; color: #38bdf8;'>Data Source: <code>{selected_asset} Stock Parquet</code></span>", unsafe_allow_html=True)
+        else: # "🌐 All Stocks Combined (Portfolio Aggregate)"
+            all_avail_stocks = get_available_stock_symbols()
+            portfolio_scope = st.selectbox(
+                "Universe Scope:",
+                [
+                    "🏆 Top 50 Benchmark Equities (Nifty 50 - Fast ~1.5s)",
+                    "⭐ Top 100 Large & Mid Cap Equities (~3s)",
+                    "🔥 All Nifty 500 Equities (501 Stocks - Full Universe)",
+                    "🎯 Custom Stock Selection (Multiselect)"
+                ],
+                index=0
+            )
+            if "Custom" in portfolio_scope:
+                portfolio_symbols = st.multiselect(
+                    "Select Custom Equities:",
+                    all_avail_stocks,
+                    default=["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "ITC", "BHARTIARTL", "LT", "AXISBANK"]
+                )
+            else:
+                portfolio_symbols = get_portfolio_universe_symbols(portfolio_scope, all_avail_stocks)
+            selected_asset = "PORTFOLIO_COMBINED"
+            st.markdown(f"<span style='font-size: 12px; color: #38bdf8;'>Portfolio Target: <strong>{len(portfolio_symbols)} Stocks</strong> selected for aggregate analysis</span>", unsafe_allow_html=True)
             
     with ac3:
         timeframe = st.selectbox("📅 Timeframe:", ["Daily", "Weekly", "Monthly"], index=1)
 
-
-        
     # Load raw asset data
-    raw_df = load_asset_ohlc(selected_asset, timeframe)
-    min_data_date = raw_df['date'].min().date()
-    max_data_date = raw_df['date'].max().date()
+    if asset_type == "🌐 All Stocks Combined (Portfolio Aggregate)":
+        min_data_date = pd.to_datetime("2000-01-01").date()
+        max_data_date = pd.to_datetime("2026-09-19").date()
+    else:
+        raw_df = load_asset_ohlc(selected_asset, timeframe)
+        min_data_date = raw_df['date'].min().date() if not raw_df.empty else pd.to_datetime("2000-01-01").date()
+        max_data_date = raw_df['date'].max().date() if not raw_df.empty else pd.to_datetime("2026-09-19").date()
+
     
     # Controls & Seekbars
     st.markdown("#### ⚙️ Backtest Parameters & Seekbar Controls")
@@ -625,7 +1276,29 @@ def render_rsi_divergence_section(analytics_engine):
             tol_pct = st.number_input("Equal Level Tolerance (%):", min_value=0.05, max_value=2.0, value=0.20, step=0.05, format="%.2f")
             tol_val = tol_pct / 100.0
 
+    # If All Stocks Combined is active, branch to the portfolio aggregate renderer
+    if asset_type == "🌐 All Stocks Combined (Portfolio Aggregate)":
+        render_portfolio_combined_view(
+            symbols_to_run=portfolio_symbols,
+            timeframe=timeframe,
+            sl_val=sl_val,
+            tgt_val=tgt_val,
+            entry_mode_key=entry_mode_key,
+            price_basis_arg=price_basis_arg,
+            rsi_len=int(rsi_len),
+            lb_left=int(lb_left),
+            lb_right=int(lb_right),
+            tol_val=tol_val,
+            enable_ema_filter=enable_ema_filter,
+            ema_period=int(ema_period),
+            start_f=start_f,
+            end_f=end_f,
+            scope_label=portfolio_scope
+        )
+        return
+
     # Run Signal Detection on Complete Asset Data (so RSI warmup & history are seamless)
+
     df_calc, sig_df_full = detect_pivots_and_signals(
         raw_df,
         rsi_len=int(rsi_len),
