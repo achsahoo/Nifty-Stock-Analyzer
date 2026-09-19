@@ -85,20 +85,17 @@ def calculate_rsi(series: pd.Series, length: int = 14) -> pd.Series:
 # =============================================================
 # PINESCRIPT PIVOT DETECTION & DIVERGENCE SIGNALS
 # =============================================================
-def detect_pivots_and_signals(df: pd.DataFrame, rsi_len: int = 14, lb_left: int = 5, lb_right: int = 5, tol: float = 0.002):
+def detect_pivots_and_signals(df: pd.DataFrame, rsi_len: int = 14, lb_left: int = 5, lb_right: int = 5, tol: float = 0.002, price_basis: str = 'close'):
     """
-    Exact implementation of user's PineScript RSI Custom Divergence Indicator:
+    PineScript RSI Custom Divergence Indicator with configurable Price Basis:
+    - price_basis='close': Standard confirmation on Candle Close (ta.rsi(close, len))
+    - price_basis='open': Early signal evaluation on Candle Open (ta.rsi(open, len))
     - pl = ta.pivotlow(low, lbL, lbR)
     - ph = ta.pivothigh(high, lbL, lbR)
-    - Low Pivots:
-        1. Equal Lows (abs(curr - last)/last <= tol) and currRsi < lastRsi -> SELL
-        2. currPrice <= lastPrice and currRsi > lastRsi -> BUY
-    - High Pivots:
-        3. Equal Highs (abs(curr - last)/last <= tol) and currRsi > lastRsi -> BUY
-        4. currPrice >= lastPrice and currRsi < lastRsi -> SELL
     """
     df = df.copy().reset_index(drop=True)
-    df['rsi'] = calculate_rsi(df['close'], rsi_len)
+    basis_col = 'open' if price_basis.lower() == 'open' else 'close'
+    df['rsi'] = calculate_rsi(df[basis_col], rsi_len)
     
     n = len(df)
     lows = df['low'].values
@@ -435,7 +432,7 @@ def render_rsi_divergence_section(analytics_engine):
     
     # Controls & Seekbars
     st.markdown("#### ⚙️ Backtest Parameters & Seekbar Controls")
-    c1, c2, c3 = st.columns([2.2, 2.2, 2.6])
+    c1, c2, c3, c4 = st.columns([1.8, 1.8, 2.2, 2.2])
     
     with c1:
         sl_val = st.slider(
@@ -479,6 +476,18 @@ def render_rsi_divergence_section(analytics_engine):
             help="TradingView displays labels on signal candle p. Real-time confirmation occurs after lbR right bars close."
         )
         entry_mode_key = 'signal_next' if "Signal" in entry_timing else 'confirm_next'
+
+    with c4:
+        price_basis_choice = st.radio(
+            "📍 Signal Timing / Basis:",
+            [
+                "📊 Candle Close (Standard EOD)",
+                "🌅 Candle Open (Early Signal)"
+            ],
+            index=0,
+            help="Select whether RSI is calculated and divergence is triggered on candle Close or early on candle Open."
+        )
+        price_basis_arg = "open" if "Open" in price_basis_choice else "close"
         
     # Date Range Filter & Advanced Parameters
     with st.expander("🛠️ Date Range Filter & PineScript Indicator Settings", expanded=False):
@@ -524,7 +533,14 @@ def render_rsi_divergence_section(analytics_engine):
             tol_val = tol_pct / 100.0
 
     # Run Signal Detection on Complete Asset Data (so RSI warmup & history are seamless)
-    df_calc, sig_df_full = detect_pivots_and_signals(raw_df, rsi_len=int(rsi_len), lb_left=int(lb_left), lb_right=int(lb_right), tol=tol_val)
+    df_calc, sig_df_full = detect_pivots_and_signals(
+        raw_df,
+        rsi_len=int(rsi_len),
+        lb_left=int(lb_left),
+        lb_right=int(lb_right),
+        tol=tol_val,
+        price_basis=price_basis_arg
+    )
     
     # Filter for active date range
     mask_range = (df_calc['date'].dt.date >= start_f) & (df_calc['date'].dt.date <= end_f)

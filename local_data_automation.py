@@ -498,10 +498,10 @@ def render_downloader_section():
 # =============================================================
 # SECTION 5: NIFTY 500 DIVERGENCE SCANNER
 # =============================================================
-def run_divergence_scanner(timeframe="Weekly", recency_mode="Recent (2026 - Present)", direction_filter="All"):
+def run_divergence_scanner(timeframe="Weekly", recency_mode="Recent (2026 - Present)", direction_filter="All", price_basis="close"):
     """
     Scans all available stock parquets for divergence signals matching recency & direction filters.
-    Supports Daily, Weekly, and Monthly timeframes.
+    Supports Daily, Weekly, and Monthly timeframes with configurable Price Basis (Candle Close vs Open).
     """
     from rsi_divergence_ui import detect_pivots_and_signals
     
@@ -548,21 +548,15 @@ def run_divergence_scanner(timeframe="Weekly", recency_mode="Recent (2026 - Pres
             if len(df) < 50:
                 continue
                 
-            _, sig_df = detect_pivots_and_signals(df, rsi_len=14, lb_left=5, lb_right=5, tol=0.002)
+            _, sig_df = detect_pivots_and_signals(df, rsi_len=14, lb_left=5, lb_right=5, tol=0.002, price_basis=price_basis)
             if not sig_df.empty:
                 # Filter by recency
-                if recency_mode.startswith("🔥 Today (Signal on Latest Close)"):
-                    # Strictly filter by signal formed on the latest closed candle (not confirmation day)
+                if recency_mode.startswith("🔥 Today") or "Today" in recency_mode:
                     last_candle_day = df['date'].dt.date.iloc[-1]
-                    sig_recent = sig_df[sig_df['signal_date'].dt.date == last_candle_day]
-                elif recency_mode.startswith("⚡ Today (Alert Confirmed at p+lbR)"):
-                    # Filter by confirmation day (candle p+lbR closed on the latest date, triggering the alert)
-                    last_candle_day = df['date'].dt.date.iloc[-1]
-                    sig_recent = sig_df[sig_df['confirm_date'].dt.date == last_candle_day]
-                elif "Today" in recency_mode:
-                    # Default Today filter: strictly by signal formed on latest close price as requested
-                    last_candle_day = df['date'].dt.date.iloc[-1]
-                    sig_recent = sig_df[sig_df['signal_date'].dt.date == last_candle_day]
+                    if "Confirmed at p+lbR" in recency_mode:
+                        sig_recent = sig_df[sig_df['confirm_date'].dt.date == last_candle_day]
+                    else:
+                        sig_recent = sig_df[sig_df['signal_date'].dt.date == last_candle_day]
                 elif recency_mode.startswith("Recent (2026"):
                     sig_recent = sig_df[sig_df['confirm_date'] >= '2026-01-01']
                 elif recency_mode.startswith("Last 4 Weeks / 20 Days"):
@@ -583,18 +577,20 @@ def run_divergence_scanner(timeframe="Weekly", recency_mode="Recent (2026 - Pres
                 for _, r in sig_recent.iterrows():
                     sl_ref = r['signal_low'] if r['signal'] == 'BUY' else r['signal_high']
                     c_idx = int(r['confirm_idx']) if 'confirm_idx' in r and not pd.isna(r['confirm_idx']) else len(df) - 1
-                    confirm_close_price = df['close'].iloc[c_idx] if c_idx < len(df) else r['price']
-                    risk_pct = abs((confirm_close_price - sl_ref) / confirm_close_price) * 100.0 if confirm_close_price > 0 else 0.0
+                    ref_price_col = 'open' if price_basis == 'open' else 'close'
+                    confirm_ref_price = df[ref_price_col].iloc[c_idx] if c_idx < len(df) else r['price']
+                    risk_pct = abs((confirm_ref_price - sl_ref) / confirm_ref_price) * 100.0 if confirm_ref_price > 0 else 0.0
                     signals_found.append({
                         'Symbol': sym,
                         'Timeframe': timeframe,
+                        'Basis': 'Open' if price_basis == 'open' else 'Close',
                         'Signal': '🟢 BUY' if r['signal'] == 'BUY' else '🔴 SELL',
                         'raw_signal': r['signal'],
                         'Signal_Date': r['signal_date'].strftime('%Y-%m-%d'),
                         'Confirm_Date': r['confirm_date'].strftime('%Y-%m-%d'),
-                        'Current / Entry Price': f"₹{confirm_close_price:,.2f}",
+                        'Current / Entry Price': f"₹{confirm_ref_price:,.2f}",
                         'Pivot Price (p)': f"₹{r['price']:,.2f}",
-                        'raw_price': confirm_close_price,
+                        'raw_price': confirm_ref_price,
                         'RSI': f"{r['rsi']:.1f}",
                         'Pattern': r['reason'],
                         'Dynamic SL': f"₹{sl_ref:,.2f}",
@@ -607,8 +603,8 @@ def run_divergence_scanner(timeframe="Weekly", recency_mode="Recent (2026 - Pres
             scan_prog.progress((idx + 1) / total_files)
             scan_status.markdown(f"🔍 Scanned **{idx+1}/{total_files}** stocks | Found **{len(signals_found)}** divergences...")
             
-    scan_status.empty()
-    scan_prog.empty()
+        scan_status.empty()
+        scan_prog.empty()
     
     if signals_found:
         df_out = pd.DataFrame(signals_found)
@@ -620,17 +616,30 @@ def render_scanner_section():
     st.header("🔍 Section 5: Nifty 500 Multi-Stock Divergence Scanner")
     st.markdown("""
     High-speed scanner analyzing all **500 Nifty Equities** across **Daily, Weekly, and Monthly** candles.
-    Instantly detects genuine **Bullish and Bearish RSI Divergences** based on TradingView-exact pivot parameters.
+    Instantly detects genuine **Bullish and Bearish RSI Divergences** on **Candle Close** (Standard EOD) or **Candle Open** (Early Morning Signal).
     """)
     
-    sc1, sc2, sc3 = st.columns([1.5, 2.0, 2.0])
+    sc1, sc2, sc3, sc4 = st.columns([1.3, 1.8, 1.8, 1.6])
     with sc1:
         scan_tf = st.selectbox("Scan Timeframe:", ["Weekly", "Daily", "Monthly"], index=0, key="sec5_scan_tf")
     with sc2:
+        scan_basis = st.selectbox(
+            "Signal Timing / Basis:",
+            [
+                "📊 Candle Close Divergence (Standard)",
+                "🌅 Candle Open Divergence (Early Signal)"
+            ],
+            index=0,
+            key="sec5_scan_basis",
+            help="Choose whether divergence is confirmed on Candle Close or evaluated on Candle Open."
+        )
+        basis_val = "open" if "Open" in scan_basis else "close"
+    with sc3:
+        today_label = "🔥 Today (Signal on Latest Open)" if basis_val == "open" else "🔥 Today (Signal on Latest Close)"
         scan_recency = st.selectbox(
             "Signal Recency Filter:",
             [
-                "🔥 Today (Signal on Latest Close)",
+                today_label,
                 "⚡ Today (Alert Confirmed at p+lbR)",
                 "Last 4 Weeks / 20 Days",
                 "Recent (2026 - Present)",
@@ -640,19 +649,39 @@ def render_scanner_section():
             index=0,
             key="sec5_scan_rec"
         )
-    with sc3:
+    with sc4:
         scan_dir = st.selectbox("Direction Filter:", ["All", "🟢 Bullish Only (BUY)", "🔴 Bearish Only (SELL)"], index=0, key="sec5_scan_dir")
         
-    btn_scan = st.button("🚀 Run Divergence Scan Across Nifty 500", type="primary", key="btn_sec5_run")
-    
-    if btn_scan:
-        with st.spinner(f"Scanning 500 stocks for {scan_tf} divergences..."):
+    st.markdown("<br>", unsafe_allow_html=True)
+    bcol1, bcol2, bcol3 = st.columns([1.8, 1.8, 2.0])
+    with bcol1:
+        btn_scan_close = st.button("📊 Scan Candle Close Divergences", type="primary", key="btn_sec5_close")
+    with bcol2:
+        btn_scan_open = st.button("🌅 Scan Candle Open Divergences", key="btn_sec5_open")
+    with bcol3:
+        btn_scan_custom = st.button("🚀 Run RSI Scanner (Active Filters)", key="btn_sec5_run")
+        
+    run_scan = False
+    chosen_basis = basis_val
+    if btn_scan_close:
+        run_scan = True
+        chosen_basis = "close"
+    elif btn_scan_open:
+        run_scan = True
+        chosen_basis = "open"
+    elif btn_scan_custom:
+        run_scan = True
+        chosen_basis = basis_val
+        
+    if run_scan:
+        with st.spinner(f"Scanning 500 stocks for {scan_tf} divergences ({chosen_basis.upper()} basis)..."):
             t_start = time.time()
-            scan_results = run_divergence_scanner(scan_tf, scan_recency, scan_dir)
+            scan_results = run_divergence_scanner(scan_tf, scan_recency, scan_dir, price_basis=chosen_basis)
             t_elapsed = time.time() - t_start
             st.session_state['sec5_scan_results'] = scan_results
             st.session_state['sec5_scan_time'] = t_elapsed
             st.session_state['sec5_active_tf'] = scan_tf
+            st.session_state['sec5_active_basis'] = chosen_basis
             
     if 'sec5_scan_results' in st.session_state:
         res_df = st.session_state['sec5_scan_results']
@@ -672,9 +701,10 @@ def render_scanner_section():
             with k3:
                 st.markdown(f"""<div class='metric-card'><span class='metric-label'>Bearish Setups</span><div class='metric-value' style='color:#ef4444;'>{sells}</div><span style='font-size:11px;color:#94a3b8;'>🔴 SELL Divergences</span></div>""", unsafe_allow_html=True)
             with k4:
-                st.markdown(f"""<div class='metric-card'><span class='metric-label'>Active Timeframe</span><div class='metric-value' style='color:#fbbf24;'>{cur_tf}</div><span style='font-size:11px;color:#94a3b8;'>{scan_recency}</span></div>""", unsafe_allow_html=True)
+                basis_tag = st.session_state.get('sec5_active_basis', 'close').upper()
+                st.markdown(f"""<div class='metric-card'><span class='metric-label'>Active Setup</span><div class='metric-value' style='color:#fbbf24;'>{cur_tf} ({basis_tag})</div><span style='font-size:11px;color:#94a3b8;'>{scan_recency}</span></div>""", unsafe_allow_html=True)
             
-            display_cols = ['Symbol', 'Timeframe', 'Signal', 'Signal_Date', 'Confirm_Date', 'Current / Entry Price', 'Pivot Price (p)', 'RSI', 'Dynamic SL', 'SL Risk', 'Pattern']
+            display_cols = ['Symbol', 'Timeframe', 'Basis', 'Signal', 'Signal_Date', 'Confirm_Date', 'Current / Entry Price', 'Pivot Price (p)', 'RSI', 'Dynamic SL', 'SL Risk', 'Pattern']
             st.dataframe(res_df[display_cols], width="stretch", hide_index=True)
             
             st.markdown("#### 🎯 Quick-Load Into Section 3 Backtest Engine")
