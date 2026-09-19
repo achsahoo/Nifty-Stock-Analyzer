@@ -258,9 +258,17 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
 # =============================================================
 # BACKTEST SIMULATION ENGINE
 # =============================================================
-def run_rsi_divergence_backtest(df: pd.DataFrame, sig_df: pd.DataFrame, sl_pct: float = 0.0, tgt_pct: float = 3.0, entry_mode: str = 'signal_next'):
+def run_rsi_divergence_backtest(
+    df: pd.DataFrame,
+    sig_df: pd.DataFrame,
+    sl_pct: float = 0.0,
+    tgt_pct: float = 3.0,
+    entry_mode: str = 'signal_next',
+    enable_ema_filter: bool = False,
+    ema_period: int = 21
+):
     """
-    Backtest simulation matching the exact user specifications:
+    Backtest simulation matching user specifications with optional Anti-Chasing EMA filter:
     1. Entry: Next candle Open on which signal shows (Weekly, Daily, or Monthly).
     2. Exit:
        - Stop Loss from seekbar (if > 0%)
@@ -269,21 +277,33 @@ def run_rsi_divergence_backtest(df: pd.DataFrame, sig_df: pd.DataFrame, sl_pct: 
          * For Short (SELL) entry -> Stoploss is Signal Candle High
        - Target from seekbar (if > 0%)
        - If Target is 0.0% -> Open-ended ride until SL
+    3. Anti-Chasing EMA Filter (when enable_ema_filter=True):
+       - If Candle Close < EMA on SELL -> Skip signal (avoid selling into the bottom)
+       - If Candle Close < EMA on BUY  -> Take signal (dip buying)
+       - If Candle Close > EMA on BUY  -> Skip signal (avoid buying at peak)
+       - If Candle Close > EMA on SELL -> Take signal (top selling)
+       - Evaluates skipped signals to audit whether skipping was Correct (saved a loss) or Wrong (missed a win).
     """
     df = df.copy().reset_index(drop=True)
     if sig_df.empty:
-        return pd.DataFrame(), {}
+        return pd.DataFrame(), {}, pd.DataFrame(), {}
         
     n_bars = len(df)
     date_to_idx = {d: i for i, d in enumerate(df['date'])}
     
-    trades = []
+    if enable_ema_filter and 'ema' not in df.columns:
+        df['ema'] = df['close'].ewm(span=int(ema_period), adjust=False).mean()
+        
+    active_trades = []
+    skipped_trades = []
+    all_trades = []
     
     for _, sig in sig_df.iterrows():
         ref_date = sig['signal_date'] if entry_mode == 'signal_next' else sig['confirm_date']
         if ref_date not in date_to_idx:
             continue
-        e_bar = date_to_idx[ref_date] + 1
+        ref_bar = date_to_idx[ref_date]
+        e_bar = ref_bar + 1
         if e_bar >= n_bars:
             continue
             
@@ -361,8 +381,9 @@ def run_rsi_divergence_backtest(df: pd.DataFrame, sig_df: pd.DataFrame, sl_pct: 
             
         pnl_pts = (exit_price - entry_price) if action == 'BUY' else (entry_price - exit_price)
         pnl_pct = (pnl_pts / entry_price) * 100.0
+        is_win = pnl_pts > 0
         
-        trades.append({
+        trade_data = {
             'signal_date': sig['signal_date'],
             'entry_date': entry_date,
             'exit_date': exit_date,
@@ -377,14 +398,50 @@ def run_rsi_divergence_backtest(df: pd.DataFrame, sig_df: pd.DataFrame, sl_pct: 
             'holding_bars': exit_bar - e_bar + 1,
             'pnl_pts': pnl_pts,
             'pnl_pct': pnl_pct,
-            'win': pnl_pts > 0,
+            'win': is_win,
             'sl_desc': sl_desc,
             'tgt_desc': tgt_desc
-        })
+        }
+        all_trades.append(trade_data)
         
-    trades_df = pd.DataFrame(trades)
-    stats = compute_backtest_stats(trades_df)
-    return trades_df, stats
+        if enable_ema_filter:
+            close_price = df['close'].iloc[ref_bar]
+            ema_val = df['ema'].iloc[ref_bar]
+            is_skipped = False
+            skip_reason = ''
+            
+            if close_price < ema_val and action == 'SELL':
+                is_skipped = True
+                skip_reason = f"Close (₹{close_price:,.2f}) < {ema_period} EMA (₹{ema_val:,.2f}) on SELL"
+            elif close_price > ema_val and action == 'BUY':
+                is_skipped = True
+                skip_reason = f"Close (₹{close_price:,.2f}) > {ema_period} EMA (₹{ema_val:,.2f}) on BUY"
+                
+            if is_skipped:
+                is_correct = not is_win
+                verdict_str = "🟢 Correct Skip (Saved Loss)" if is_correct else "🔴 Wrong Skip (Missed Win)"
+                skipped_item = dict(trade_data)
+                skipped_item.update({
+                    'signal_close': close_price,
+                    'ema_val': ema_val,
+                    'skip_reason': skip_reason,
+                    'is_correct_skip': is_correct,
+                    'verdict': verdict_str
+                })
+                skipped_trades.append(skipped_item)
+            else:
+                active_trades.append(trade_data)
+        else:
+            active_trades.append(trade_data)
+            
+    df_active = pd.DataFrame(active_trades)
+    df_skipped = pd.DataFrame(skipped_trades)
+    df_all = pd.DataFrame(all_trades)
+    
+    stats_active = compute_backtest_stats(df_active)
+    stats_all = compute_backtest_stats(df_all)
+    
+    return df_active, stats_active, df_skipped, stats_all
 
 # =============================================================
 # STREAMLIT UI COMPONENT FOR SECTION 4
@@ -489,6 +546,42 @@ def render_rsi_divergence_section(analytics_engine):
         )
         price_basis_arg = "open" if "Open" in price_basis_choice else "close"
         
+    # Anti-Chasing EMA Filter Toggle & Input Controls
+    st.markdown("---")
+    st.markdown("#### 🛡️ Anti-Chasing EMA Filter (Mean-Reversion Gate)")
+    ef1, ef2, ef3 = st.columns([1.8, 1.4, 3.2])
+    with ef1:
+        enable_ema_filter = st.toggle(
+            "🛡️ Enable Anti-Chasing EMA Filter",
+            value=False,
+            key="sec3_enable_ema_filter",
+            help="When enabled: Skips SELL when candle close is below EMA (avoids selling into the low) and skips BUY when candle close is above EMA (avoids buying into the high)."
+        )
+    with ef2:
+        if enable_ema_filter:
+            ema_period = st.number_input(
+                "⚡ EMA Period:",
+                min_value=2,
+                max_value=200,
+                value=21,
+                step=1,
+                key="sec3_ema_period",
+                help="Variable EMA period (e.g. 9, 21, 50, etc.)."
+            )
+        else:
+            ema_period = 21
+    with ef3:
+        if enable_ema_filter:
+            st.markdown(f"""
+            <div style='background:rgba(56, 189, 248, 0.08); border-left: 3px solid #38bdf8; padding: 6px 12px; border-radius: 4px; font-size: 12px; color: #cbd5e1;'>
+                <strong>Anti-Chasing Logic Active ({ema_period} EMA):</strong><br>
+                • <strong>Close &lt; {ema_period} EMA:</strong> 🟢 Take BUY | ❌ Skip SELL<br>
+                • <strong>Close &gt; {ema_period} EMA:</strong> 🔴 Take SELL | ❌ Skip BUY
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("<span style='color:#94a3b8; font-size:12px;'>Filter is disabled. Backtest is taking all divergence signals without EMA restrictions.</span>", unsafe_allow_html=True)
+        
     # Date Range Filter & Advanced Parameters
     with st.expander("🛠️ Date Range Filter & PineScript Indicator Settings", expanded=False):
         f1, f2, f3 = st.columns([1.5, 1.5, 2.0])
@@ -542,6 +635,10 @@ def render_rsi_divergence_section(analytics_engine):
         price_basis=price_basis_arg
     )
     
+    # Calculate EMA on full data if filter enabled
+    if enable_ema_filter:
+        df_calc['ema'] = df_calc['close'].ewm(span=int(ema_period), adjust=False).mean()
+    
     # Filter for active date range
     mask_range = (df_calc['date'].dt.date >= start_f) & (df_calc['date'].dt.date <= end_f)
     df_filtered = df_calc[mask_range].copy().reset_index(drop=True)
@@ -556,7 +653,15 @@ def render_rsi_divergence_section(analytics_engine):
         return
 
     # Run backtest on full continuous data series so all trades complete their full lifecycle
-    trades_df_full, _ = run_rsi_divergence_backtest(df_calc, sig_df_full, sl_pct=sl_val, tgt_pct=tgt_val, entry_mode=entry_mode_key)
+    trades_df_full, _, skipped_df_full, _ = run_rsi_divergence_backtest(
+        df_calc,
+        sig_df_full,
+        sl_pct=sl_val,
+        tgt_pct=tgt_val,
+        entry_mode=entry_mode_key,
+        enable_ema_filter=enable_ema_filter,
+        ema_period=int(ema_period)
+    )
     
     if not trades_df_full.empty:
         trades_df = trades_df_full[
@@ -568,8 +673,21 @@ def render_rsi_divergence_section(analytics_engine):
         trades_df = pd.DataFrame()
         stats = {}
         
+    if not skipped_df_full.empty:
+        skipped_df = skipped_df_full[
+            (pd.to_datetime(skipped_df_full['signal_date']).dt.date >= start_f) &
+            (pd.to_datetime(skipped_df_full['signal_date']).dt.date <= end_f)
+        ].copy().reset_index(drop=True)
+    else:
+        skipped_df = pd.DataFrame()
+        
+    all_trades_in_range = pd.concat([trades_df, skipped_df], ignore_index=True) if not skipped_df.empty else trades_df
+    all_stats = compute_backtest_stats(all_trades_in_range)
+        
     if trades_df.empty or not stats:
         st.warning(f"No executed trades found on {selected_asset} ({timeframe}) within the selected date window ({start_f} to {end_f}).")
+        if enable_ema_filter and not skipped_df.empty:
+            st.info(f"💡 Notice: The {ema_period} EMA filter skipped all {len(skipped_df)} divergence signals in this window.")
         return
 
     # =============================================================
@@ -604,6 +722,128 @@ def render_rsi_divergence_section(analytics_engine):
     with m6:
         avg_col = "#00d26a" if avg_trade_pct >= 0 else "#f8312f"
         st.markdown(f"""<div class='metric-card'><span class='metric-label'>Avg Trade %</span><div class='metric-value' style='color:{avg_col};'>{avg_trade_pct:+.2f}%</div><span style='font-size:11px;color:#94a3b8;'>Per Executed Trade</span></div>""", unsafe_allow_html=True)
+
+    # =============================================================
+    # EXTRA INFORMATION FOR SKIPPED SIGNALS (EMA FILTER AUDIT)
+    # =============================================================
+    if enable_ema_filter and not skipped_df.empty:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(f"### 🛡️ Anti-Chasing {ema_period} EMA Filter Impact & Skipped Signals Audit")
+        
+        num_skips = len(skipped_df)
+        total_raw_signals = len(all_trades_in_range)
+        num_correct = int((skipped_df['is_correct_skip'] == True).sum())
+        num_wrong = int((skipped_df['is_correct_skip'] == False).sum())
+        pct_correct = (num_correct / num_skips * 100.0) if num_skips > 0 else 0.0
+        pct_wrong = (num_wrong / num_skips * 100.0) if num_skips > 0 else 0.0
+        net_pts_saved = -float(skipped_df['pnl_pts'].sum())
+        
+        orig_wr = all_stats.get('win_rate', 0.0)
+        wr_delta = win_rate - orig_wr
+        orig_pnl = all_stats.get('total_pnl_pts', 0.0)
+        pnl_delta = total_pnl - orig_pnl
+        
+        sk1, sk2, sk3, sk4, sk5, sk6 = st.columns(6)
+        with sk1:
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Total Skipped</span><div class='metric-value' style='color:#fbbf24;'>{num_skips}</div><span style='font-size:11px;color:#94a3b8;'>{num_skips/total_raw_signals*100:.1f}% of {total_raw_signals} Signals</span></div>""", unsafe_allow_html=True)
+        with sk2:
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Correct Skips</span><div class='metric-value' style='color:#00d26a;'>{num_correct}</div><span style='font-size:11px;color:#94a3b8;'>🟢 {pct_correct:.1f}% Saved Losses</span></div>""", unsafe_allow_html=True)
+        with sk3:
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Wrong Skips</span><div class='metric-value' style='color:#ef4444;'>{num_wrong}</div><span style='font-size:11px;color:#94a3b8;'>🔴 {pct_wrong:.1f}% Missed Wins</span></div>""", unsafe_allow_html=True)
+        with sk4:
+            acc_col = "#00d26a" if pct_correct >= 50 else "#f8312f"
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Filter Accuracy</span><div class='metric-value' style='color:{acc_col};'>{pct_correct:.1f}%</div><span style='font-size:11px;color:#94a3b8;'>Loss Prevention Rate</span></div>""", unsafe_allow_html=True)
+        with sk5:
+            saved_col = "#00d26a" if net_pts_saved >= 0 else "#ef4444"
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Net Points Saved</span><div class='metric-value' style='color:{saved_col};'>{net_pts_saved:+,.1f}</div><span style='font-size:11px;color:#94a3b8;'>Avoided Loss vs Missed Win</span></div>""", unsafe_allow_html=True)
+        with sk6:
+            wr_d_col = "#00d26a" if wr_delta >= 0 else "#ef4444"
+            st.markdown(f"""<div class='metric-card'><span class='metric-label'>Win Rate Delta</span><div class='metric-value' style='color:{wr_d_col};'>{wr_delta:+.1f}%</div><span style='font-size:11px;color:#94a3b8;'>{orig_wr:.1f}% ➔ {win_rate:.1f}%</span></div>""", unsafe_allow_html=True)
+
+        # Comparative Side-by-Side Summary
+        comp_df = pd.DataFrame([
+            {
+                'Metric Dimension': 'Total Executed Trades',
+                'Unfiltered (All Signals)': f"{all_stats.get('total_trades', 0):,}",
+                f'With {ema_period} EMA Filter': f"{total_trades:,}",
+                'Filter Impact / Gain': f"-{num_skips} skipped (-{num_skips/total_raw_signals*100:.1f}%)"
+            },
+            {
+                'Metric Dimension': 'Win Rate (%)',
+                'Unfiltered (All Signals)': f"{orig_wr:.1f}%",
+                f'With {ema_period} EMA Filter': f"{win_rate:.1f}%",
+                'Filter Impact / Gain': f"{wr_delta:+.1f}%"
+            },
+            {
+                'Metric Dimension': f'Total Net PnL ({pts_label})',
+                'Unfiltered (All Signals)': f"{orig_pnl:+,.1f}",
+                f'With {ema_period} EMA Filter': f"{total_pnl:+,.1f}",
+                'Filter Impact / Gain': f"{pnl_delta:+,.1f}"
+            },
+            {
+                'Metric Dimension': 'Profit Factor',
+                'Unfiltered (All Signals)': f"{all_stats.get('profit_factor', np.nan):.2f}" if not np.isnan(all_stats.get('profit_factor', np.nan)) else 'N/A',
+                f'With {ema_period} EMA Filter': f"{pf_str}",
+                'Filter Impact / Gain': f"{pf - all_stats.get('profit_factor', 0):+.2f}" if not np.isnan(pf) and not np.isnan(all_stats.get('profit_factor', np.nan)) else '-'
+            },
+            {
+                'Metric Dimension': 'Max Drawdown (Points)',
+                'Unfiltered (All Signals)': f"{all_stats.get('max_dd_pts', 0):,.1f}",
+                f'With {ema_period} EMA Filter': f"{max_dd:,.1f}",
+                'Filter Impact / Gain': f"{max_dd - all_stats.get('max_dd_pts', 0):+,.1f} pts saved"
+            },
+            {
+                'Metric Dimension': 'Average Trade Return (%)',
+                'Unfiltered (All Signals)': f"{all_stats.get('avg_trade_pct', 0):+.2f}%",
+                f'With {ema_period} EMA Filter': f"{avg_trade_pct:+.2f}%",
+                'Filter Impact / Gain': f"{avg_trade_pct - all_stats.get('avg_trade_pct', 0):+.2f}%"
+            }
+        ])
+        st.dataframe(comp_df, width="stretch", hide_index=True)
+
+        # Expandable Skipped Signals Audit Table
+        with st.expander(f"🔍 Inspect All {num_skips} Skipped Signals & Their Simulated Outcomes", expanded=False):
+            st.markdown(f"""
+            Itemized breakdown of every divergence signal skipped by the **{ema_period} EMA rule**:
+            - 🟢 **Correct Skip (Saved Loss)**: Signal would have hit Stop Loss or closed in loss. Skipping protected your capital.
+            - 🔴 **Wrong Skip (Missed Win)**: Signal would have hit Target or closed in profit. Skipping missed a winning trade.
+            """)
+            sk_disp_cols = [
+                'signal_date', 'action', 'signal_close', 'ema_val', 'skip_reason',
+                'entry_price', 'exit_price', 'exit_reason', 'pnl_pts', 'pnl_pct', 'verdict'
+            ]
+            sk_table = skipped_df[sk_disp_cols].copy()
+            sk_table['signal_date'] = pd.to_datetime(sk_table['signal_date']).dt.strftime('%Y-%m-%d')
+            sk_table['signal_close'] = sk_table['signal_close'].map(lambda x: f"₹{x:,.2f}")
+            sk_table['ema_val'] = sk_table['ema_val'].map(lambda x: f"₹{x:,.2f}")
+            sk_table['entry_price'] = sk_table['entry_price'].map(lambda x: f"₹{x:,.2f}")
+            sk_table['exit_price'] = sk_table['exit_price'].map(lambda x: f"₹{x:,.2f}")
+            sk_table['pnl_pts'] = sk_table['pnl_pts'].map(lambda x: f"{x:+,.1f}")
+            sk_table['pnl_pct'] = sk_table['pnl_pct'].map(lambda x: f"{x:+.2f}%")
+            
+            sk_table = sk_table.rename(columns={
+                'signal_date': 'Signal Date',
+                'action': 'Signal',
+                'signal_close': 'Signal Close',
+                'ema_val': f'{ema_period} EMA Price',
+                'skip_reason': 'Filter Condition Triggered',
+                'entry_price': 'Hypothetical Entry',
+                'exit_price': 'Hypothetical Exit',
+                'exit_reason': 'Simulated Exit Reason',
+                'pnl_pts': 'Hypothetical PnL (Pts)',
+                'pnl_pct': 'Hypothetical PnL (%)',
+                'verdict': 'Filter Outcome / Verdict'
+            })
+            st.dataframe(sk_table, width="stretch", hide_index=True)
+            
+            sk_csv = skipped_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label=f"📥 Download Skipped Signals Audit CSV",
+                data=sk_csv,
+                file_name=f"{selected_asset.lower()}_skipped_signals_ema{ema_period}.csv",
+                mime="text/csv",
+                key="btn_download_skipped_csv"
+            )
 
     # =============================================================
     # EQUITY CURVE & CUMULATIVE PNL CHART
@@ -701,6 +941,38 @@ def render_rsi_divergence_section(analytics_engine):
                 textposition='top center',
                 name='SELL Signal'
             ), row=1, col=1)
+            
+        # EMA Curve & Skipped Signals (when EMA filter enabled)
+        if enable_ema_filter and 'ema' in df_filtered.columns:
+            fig_cand.add_trace(go.Scatter(
+                x=df_filtered['date'],
+                y=df_filtered['ema'],
+                mode='lines',
+                name=f'{ema_period} EMA',
+                line=dict(color='#f59e0b', width=2)
+            ), row=1, col=1)
+            
+            if not skipped_df.empty:
+                sk_buys = skipped_df[skipped_df['action'] == 'BUY']
+                if not sk_buys.empty:
+                    fig_cand.add_trace(go.Scatter(
+                        x=sk_buys['signal_date'],
+                        y=sk_buys['entry_price'],
+                        mode='markers',
+                        marker=dict(symbol='x', size=11, color='#94a3b8'),
+                        name=f'Skipped BUY (Close > {ema_period} EMA)',
+                        hovertext=[f"Skipped BUY: {r['skip_reason']} | {r['verdict']}" for _, r in sk_buys.iterrows()]
+                    ), row=1, col=1)
+                sk_sells = skipped_df[skipped_df['action'] == 'SELL']
+                if not sk_sells.empty:
+                    fig_cand.add_trace(go.Scatter(
+                        x=sk_sells['signal_date'],
+                        y=sk_sells['entry_price'],
+                        mode='markers',
+                        marker=dict(symbol='x', size=11, color='#fca5a5'),
+                        name=f'Skipped SELL (Close < {ema_period} EMA)',
+                        hovertext=[f"Skipped SELL: {r['skip_reason']} | {r['verdict']}" for _, r in sk_sells.iterrows()]
+                    ), row=1, col=1)
             
         # RSI Pane
         fig_cand.add_trace(go.Scatter(
