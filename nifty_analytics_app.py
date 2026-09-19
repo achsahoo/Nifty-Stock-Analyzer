@@ -121,8 +121,7 @@ with st.sidebar:
         "📐 Section 3: RSI Custom Divergence Backtest",
         "📥 Section 4: Nifty 500 Automated Data Downloader",
         "🔍 Section 5: Nifty 500 Multi-Stock Divergence Scanner",
-        "⚡ Section 6: Nifty Automated Data Downloader",
-        "📈 Section 7: Dual EMA Crossover Backtest Engine"
+        "⚡ Section 6: Nifty Automated Data Downloader"
     ]
     
     default_nav_idx = 0
@@ -766,15 +765,4 @@ elif nav_selection == "⚡ Section 6: Nifty Automated Data Downloader":
         import traceback
         st.code(traceback.format_exc(), language="python")
 
-elif nav_selection == "📈 Section 7: Dual EMA Crossover Backtest Engine":
-    try:
-        import ema_crossover_ui
-        if not hasattr(ema_crossover_ui, "render_ema_crossover_section"):
-            import importlib
-            ema_crossover_ui = importlib.reload(ema_crossover_ui)
-        ema_crossover_ui.render_ema_crossover_section(analytics_engine)
-    except Exception as e:
-        st.error(f"### ⚠️ Failed to load Section 7: {e}")
-        st.info("💡 **Tip**: If you recently updated the app on Streamlit Cloud, please click **'Manage app'** (lower-right corner) ➔ **'Reboot app'** to reload newly deployed modules.")
-        import traceback
-        st.code(traceback.format_exc(), language="python")
+

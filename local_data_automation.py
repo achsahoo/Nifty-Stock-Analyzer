@@ -502,14 +502,11 @@ def run_divergence_scanner(
     timeframe="Weekly",
     recency_mode="Recent (2026 - Present)",
     direction_filter="All",
-    price_basis="close",
-    fast_ema=9,
-    slow_ema=21,
-    ema_filter_mode="Trend Aligned"
+    price_basis="close"
 ):
     """
-    Scans all available stock parquets for divergence signals matching recency, direction, and Dual EMA filters.
-    Supports Daily, Weekly, and Monthly timeframes with configurable Price Basis (Candle Close vs Open) and customizable 2-EMA rules.
+    Scans all available stock parquets for divergence signals matching recency and direction filters.
+    Supports Daily, Weekly, and Monthly timeframes with configurable Price Basis (Candle Close vs Open).
     """
     from rsi_divergence_ui import detect_pivots_and_signals
     
@@ -537,8 +534,6 @@ def run_divergence_scanner(
     scan_status = st.empty()
     
     signals_found = []
-    fast_p = min(int(fast_ema), int(slow_ema))
-    slow_p = max(int(fast_ema), int(slow_ema))
     
     for idx, f in enumerate(files):
         sym = f.replace(pattern_suffix, "")
@@ -555,12 +550,8 @@ def run_divergence_scanner(
                 
             df['date'] = pd.to_datetime(df['datetime'])
             df = df.sort_values('date').reset_index(drop=True)
-            if len(df) < max(slow_p + 10, 50):
+            if len(df) < 50:
                 continue
-                
-            # Calculate Dual EMAs
-            df['fast_ema'] = df['close'].ewm(span=fast_p, adjust=False).mean()
-            df['slow_ema'] = df['close'].ewm(span=slow_p, adjust=False).mean()
                 
             _, sig_df = detect_pivots_and_signals(df, rsi_len=14, lb_left=5, lb_right=5, tol=0.002, price_basis=price_basis)
             if not sig_df.empty:
@@ -594,29 +585,6 @@ def run_divergence_scanner(
                     ref_price_col = 'open' if price_basis == 'open' else 'close'
                     confirm_ref_price = df[ref_price_col].iloc[c_idx] if c_idx < len(df) else r['price']
                     
-                    val_fast = df['fast_ema'].iloc[c_idx] if c_idx < len(df) else np.nan
-                    val_slow = df['slow_ema'].iloc[c_idx] if c_idx < len(df) else np.nan
-                    
-                    is_bullish_ema = val_fast > val_slow
-                    ema_trend_str = f"Bullish ({fast_p} > {slow_p})" if is_bullish_ema else f"Bearish ({fast_p} < {slow_p})"
-                    
-                    # Apply Dual EMA Confluence Filter
-                    if "Trend Aligned" in ema_filter_mode:
-                        if r['signal'] == 'BUY' and not is_bullish_ema:
-                            continue
-                        if r['signal'] == 'SELL' and is_bullish_ema:
-                            continue
-                    elif "Price Aligned" in ema_filter_mode:
-                        if r['signal'] == 'BUY' and not (confirm_ref_price > val_fast and confirm_ref_price > val_slow):
-                            continue
-                        if r['signal'] == 'SELL' and not (confirm_ref_price < val_fast and confirm_ref_price < val_slow):
-                            continue
-                    elif "Fresh EMA Cross" in ema_filter_mode:
-                        w_start = max(0, c_idx - 5)
-                        diff = df['fast_ema'].iloc[w_start:c_idx+1] - df['slow_ema'].iloc[w_start:c_idx+1]
-                        if not (diff.min() <= 0 and diff.max() >= 0):
-                            continue
-                            
                     risk_pct = abs((confirm_ref_price - sl_ref) / confirm_ref_price) * 100.0 if confirm_ref_price > 0 else 0.0
                     signals_found.append({
                         'Symbol': sym,
@@ -627,9 +595,6 @@ def run_divergence_scanner(
                         'Signal_Date': r['signal_date'].strftime('%Y-%m-%d'),
                         'Confirm_Date': r['confirm_date'].strftime('%Y-%m-%d'),
                         'Current / Entry Price': f"₹{confirm_ref_price:,.2f}",
-                        f'Fast EMA ({fast_p})': f"₹{val_fast:,.2f}",
-                        f'Slow EMA ({slow_p})': f"₹{val_slow:,.2f}",
-                        'EMA Trend': ema_trend_str,
                         'Pivot Price (p)': f"₹{r['price']:,.2f}",
                         'raw_price': confirm_ref_price,
                         'RSI': f"{r['rsi']:.1f}",
@@ -657,7 +622,7 @@ def render_scanner_section():
     st.header("🔍 Section 5: Nifty 500 Multi-Stock Divergence Scanner")
     st.markdown("""
     High-speed scanner analyzing all **500 Nifty Equities** across **Daily, Weekly, and Monthly** candles.
-    Instantly detects genuine **Bullish and Bearish RSI Divergences** on **Candle Close** (Standard EOD) or **Candle Open** (Early Morning Signal) filtered by **Dual EMA Confluence**.
+    Instantly detects genuine **Bullish and Bearish RSI Divergences** on **Candle Close** (Standard EOD) or **Candle Open** (Early Morning Signal).
     """)
     
     sc1, sc2, sc3, sc4 = st.columns([1.3, 1.8, 1.8, 1.6])
@@ -693,26 +658,6 @@ def render_scanner_section():
     with sc4:
         scan_dir = st.selectbox("Direction Filter:", ["All", "🟢 Bullish Only (BUY)", "🔴 Bearish Only (SELL)"], index=0, key="sec5_scan_dir")
         
-    st.markdown("##### ⚙️ Dual EMA Confluence Filter")
-    em1, em2, em3 = st.columns([1.2, 1.2, 2.6])
-    with em1:
-        scan_fast_ema = st.number_input("⚡ Fast EMA Period:", min_value=2, max_value=200, value=9, step=1, key="sec5_fast_ema")
-    with em2:
-        scan_slow_ema = st.number_input("🐢 Slow EMA Period:", min_value=3, max_value=500, value=21, step=1, key="sec5_slow_ema")
-    with em3:
-        scan_ema_mode = st.selectbox(
-            "🎯 EMA Confluence Rule:",
-            [
-                "🟢 Trend Aligned (BUY: Fast > Slow | SELL: Fast < Slow)",
-                "💎 Price Aligned (BUY: Price > Both EMAs | SELL: Price < Both EMAs)",
-                "⚡ Fresh EMA Cross (Cross within last 5 bars)",
-                "⚪ None (Show All Divergences - Display EMA values)"
-            ],
-            index=0,
-            key="sec5_ema_filter_mode",
-            help="Filter RSI divergences using the two specified EMAs. 'Trend Aligned' only shows Bullish divergences when Fast EMA > Slow EMA and Bearish when Fast < Slow."
-        )
-        
     st.markdown("<br>", unsafe_allow_html=True)
     bcol1, bcol2, bcol3 = st.columns([1.8, 1.8, 2.0])
     with bcol1:
@@ -735,33 +680,24 @@ def render_scanner_section():
         chosen_basis = basis_val
         
     if run_scan:
-        with st.spinner(f"Scanning 500 stocks for {scan_tf} divergences ({chosen_basis.upper()} basis, {scan_fast_ema}/{scan_slow_ema} EMA)..."):
+        with st.spinner(f"Scanning 500 stocks for {scan_tf} divergences ({chosen_basis.upper()} basis)..."):
             t_start = time.time()
             scan_results = run_divergence_scanner(
                 scan_tf,
                 scan_recency,
                 scan_dir,
-                price_basis=chosen_basis,
-                fast_ema=scan_fast_ema,
-                slow_ema=scan_slow_ema,
-                ema_filter_mode=scan_ema_mode
+                price_basis=chosen_basis
             )
             t_elapsed = time.time() - t_start
             st.session_state['sec5_scan_results'] = scan_results
             st.session_state['sec5_scan_time'] = t_elapsed
             st.session_state['sec5_active_tf'] = scan_tf
             st.session_state['sec5_active_basis'] = chosen_basis
-            st.session_state['sec5_active_fast_ema'] = scan_fast_ema
-            st.session_state['sec5_active_slow_ema'] = scan_slow_ema
             
     if 'sec5_scan_results' in st.session_state:
         res_df = st.session_state['sec5_scan_results']
         t_el = st.session_state.get('sec5_scan_time', 0.0)
         cur_tf = st.session_state.get('sec5_active_tf', scan_tf)
-        cur_fast = st.session_state.get('sec5_active_fast_ema', scan_fast_ema)
-        cur_slow = st.session_state.get('sec5_active_slow_ema', scan_slow_ema)
-        fast_p_disp = min(int(cur_fast), int(cur_slow))
-        slow_p_disp = max(int(cur_fast), int(cur_slow))
         
         if not res_df.empty:
             buys = len(res_df[res_df['raw_signal'] == 'BUY'])
@@ -777,12 +713,11 @@ def render_scanner_section():
                 st.markdown(f"""<div class='metric-card'><span class='metric-label'>Bearish Setups</span><div class='metric-value' style='color:#ef4444;'>{sells}</div><span style='font-size:11px;color:#94a3b8;'>🔴 SELL Divergences</span></div>""", unsafe_allow_html=True)
             with k4:
                 basis_tag = st.session_state.get('sec5_active_basis', 'close').upper()
-                st.markdown(f"""<div class='metric-card'><span class='metric-label'>Active Setup</span><div class='metric-value' style='color:#fbbf24;'>{cur_tf} ({basis_tag})</div><span style='font-size:11px;color:#94a3b8;'>EMAs: {fast_p_disp}/{slow_p_disp} | {scan_recency}</span></div>""", unsafe_allow_html=True)
+                st.markdown(f"""<div class='metric-card'><span class='metric-label'>Active Setup</span><div class='metric-value' style='color:#fbbf24;'>{cur_tf} ({basis_tag})</div><span style='font-size:11px;color:#94a3b8;'>{scan_recency}</span></div>""", unsafe_allow_html=True)
             
             display_cols = [
                 'Symbol', 'Timeframe', 'Basis', 'Signal', 'Signal_Date', 'Confirm_Date',
-                'Current / Entry Price', f'Fast EMA ({fast_p_disp})', f'Slow EMA ({slow_p_disp})',
-                'EMA Trend', 'RSI', 'Dynamic SL', 'SL Risk', 'Pattern'
+                'Current / Entry Price', 'Pivot Price (p)', 'RSI', 'Dynamic SL', 'SL Risk', 'Pattern'
             ]
             st.dataframe(res_df[display_cols], width="stretch", hide_index=True)
             
