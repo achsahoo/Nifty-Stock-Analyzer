@@ -71,6 +71,23 @@ st.markdown("""
     }
     .badge-primary { background: #1e3a8a; color: #93c5fd; }
     .badge-success { background: #064e3b; color: #6ee7b7; }
+    
+    /* Mobile & Tablet touch-friendly adjustments */
+    @media (max-width: 768px) {
+        div[data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            gap: 10px !important;
+        }
+    }
+    div[data-testid="stToggle"] {
+        cursor: pointer !important;
+        touch-action: manipulation !important;
+        user-select: none !important;
+    }
+    div[data-testid="stToggle"] label {
+        cursor: pointer !important;
+        width: 100% !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 

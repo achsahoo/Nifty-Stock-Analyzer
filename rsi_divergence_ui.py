@@ -1145,6 +1145,43 @@ def render_portfolio_combined_view(
 def render_rsi_divergence_section(analytics_engine):
     st.header("📐 Section 3: RSI Custom Divergence Backtest Engine")
     st.markdown("""
+    <style>
+    /* Responsive Mobile & Tablet Adjustments for Section 3 */
+    @media (max-width: 900px) {
+        div[data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            gap: 12px !important;
+        }
+    }
+    
+    /* Touch-friendly Toggle Styles across Mobile, Tablet, and Desktop */
+    div[data-testid="stToggle"] {
+        cursor: pointer !important;
+        touch-action: manipulation !important;
+        user-select: none !important;
+        -webkit-tap-highlight-color: rgba(56, 189, 248, 0.2) !important;
+        padding: 4px 0 !important;
+        width: 100% !important;
+    }
+    
+    div[data-testid="stToggle"] label {
+        cursor: pointer !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 10px !important;
+        width: 100% !important;
+    }
+    
+    div[data-testid="stToggle"] label p {
+        font-size: 14.5px !important;
+        font-weight: 600 !important;
+        color: #e2e8f0 !important;
+        cursor: pointer !important;
+        margin: 0 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    st.markdown("""
     Interactive quantitative backtest for your **RSI Custom Divergence Indicator** across **NIFTY 50** and **200+ F&O Stocks** on **Daily, Weekly, and Monthly** timeframes.
     Adjust the **Stop-Loss** and **Target** seekbars to immediately see recalculated performance statistics, equity growth curves, candlestick signals, and complete trade audits.
     """)
@@ -1270,16 +1307,18 @@ def render_rsi_divergence_section(analytics_engine):
     # Anti-Chasing EMA Filter Toggle & Input Controls
     st.markdown("---")
     st.markdown("#### 🛡️ Anti-Chasing EMA Filter (Mean-Reversion Gate)")
-    ef1, ef2, ef3 = st.columns([1.8, 1.4, 3.2])
-    with ef1:
-        enable_ema_filter = st.toggle(
-            "🛡️ Enable Anti-Chasing EMA Filter",
-            value=False,
-            key="sec3_enable_ema_filter",
-            help="When enabled: Skips SELL when candle close is below EMA (avoids selling into the low) and skips BUY when candle close is above EMA (avoids buying into the high)."
-        )
-    with ef2:
-        if enable_ema_filter:
+    
+    # Toggle placed directly on its own row to provide 100% full-width touch area on mobile, tablet, and desktop
+    enable_ema_filter = st.toggle(
+        "🛡️ Enable Anti-Chasing EMA Filter",
+        value=False,
+        key="sec3_enable_ema_filter",
+        help="When enabled: Skips SELL when candle close is below EMA (avoids selling into the low) and skips BUY when candle close is above EMA (avoids buying into the high)."
+    )
+    
+    if enable_ema_filter:
+        c1, c2 = st.columns([1.5, 3.5])
+        with c1:
             ema_period = st.number_input(
                 "⚡ EMA Period:",
                 min_value=2,
@@ -1289,19 +1328,17 @@ def render_rsi_divergence_section(analytics_engine):
                 key="sec3_ema_period",
                 help="Variable EMA period (e.g. 9, 21, 50, etc.)."
             )
-        else:
-            ema_period = 21
-    with ef3:
-        if enable_ema_filter:
+        with c2:
             st.markdown(f"""
-            <div style='background:rgba(56, 189, 248, 0.08); border-left: 3px solid #38bdf8; padding: 6px 12px; border-radius: 4px; font-size: 12px; color: #cbd5e1;'>
+            <div style='background:rgba(56, 189, 248, 0.08); border-left: 3px solid #38bdf8; padding: 8px 14px; border-radius: 6px; font-size: 13px; color: #cbd5e1; margin-top: 4px;'>
                 <strong>Anti-Chasing Logic Active ({ema_period} EMA):</strong><br>
-                • <strong>Close &lt; {ema_period} EMA:</strong> 🟢 Take BUY | ❌ Skip SELL<br>
-                • <strong>Close &gt; {ema_period} EMA:</strong> 🔴 Take SELL | ❌ Skip BUY
+                • <strong>Close &lt; {ema_period} EMA:</strong> 🟢 Take BUY | ❌ Skip SELL (avoids selling bottom)<br>
+                • <strong>Close &gt; {ema_period} EMA:</strong> 🔴 Take SELL | ❌ Skip BUY (avoids buying top)
             </div>
             """, unsafe_allow_html=True)
-        else:
-            st.markdown("<span style='color:#94a3b8; font-size:12px;'>Filter is disabled. Backtest is taking all divergence signals without EMA restrictions.</span>", unsafe_allow_html=True)
+    else:
+        ema_period = 21
+        st.caption("ℹ️ Anti-chasing filter is disabled. The backtest engine executes all divergence signals without EMA restrictions.")
         
     # Date Range Filter & Advanced Parameters
     with st.expander("🛠️ Date Range Filter & PineScript Indicator Settings", expanded=False):
