@@ -875,33 +875,47 @@ def render_portfolio_combined_view(
         b_df = y_df[y_df['action'] == 'BUY']
         n_b = len(b_df)
         w_b = int((b_df['win'] == True).sum())
-        wr_b = f"{(w_b / n_b) * 100.0:.1f}% ({w_b}/{n_b})" if n_b > 0 else "-"
+        wr_b = (w_b / n_b * 100.0) if n_b > 0 else np.nan
         
         s_df = y_df[y_df['action'] == 'SELL']
         n_s = len(s_df)
         w_s = int((s_df['win'] == True).sum())
-        wr_s = f"{(w_s / n_s) * 100.0:.1f}% ({w_s}/{n_s})" if n_s > 0 else "-"
+        wr_s = (w_s / n_s * 100.0) if n_s > 0 else np.nan
         
         y_stats.append({
-            'Year': yr,
-            'Active Stocks': y_df['symbol'].nunique(),
-            'Total Signals': n_t,
-            'Wins': w_t,
-            'Losses': n_t - w_t,
-            'Combined Win Rate (%)': f"{wr:.1f}%",
-            '🟢 BUY Win Rate': wr_b,
-            '🔴 SELL Win Rate': wr_s,
-            'Avg Return (%)': f"{avg_pct:+.2f}%",
-            'Cumulative Return (%)': f"{cum_pct:+.1f}%",
+            'Year': int(yr),
+            'Active Stocks': int(y_df['symbol'].nunique()),
+            'Total Signals': int(n_t),
+            'Wins': int(w_t),
+            'Losses': int(n_t - w_t),
+            'Combined Win Rate (%)': float(wr),
+            '🟢 BUY Win Rate (%)': float(wr_b) if not np.isnan(wr_b) else np.nan,
+            '🔴 SELL Win Rate (%)': float(wr_s) if not np.isnan(wr_s) else np.nan,
+            'Avg Return (%)': float(avg_pct),
+            'Cumulative Return (%)': float(cum_pct),
             'raw_signals': n_t,
             'raw_wr': wr
         })
         
     y_df_disp = pd.DataFrame(y_stats)
     
+    year_port_cfg = {
+        'Year': st.column_config.NumberColumn('Year', format='%d'),
+        'Active Stocks': st.column_config.NumberColumn('Active Stocks', format='%d'),
+        'Total Signals': st.column_config.NumberColumn('Total Signals', format='%d'),
+        'Wins': st.column_config.NumberColumn('Wins', format='%d'),
+        'Losses': st.column_config.NumberColumn('Losses', format='%d'),
+        'Combined Win Rate (%)': st.column_config.NumberColumn('Combined Win Rate (%)', format='%.1f%%'),
+        '🟢 BUY Win Rate (%)': st.column_config.NumberColumn('🟢 BUY Win Rate (%)', format='%.1f%%'),
+        '🔴 SELL Win Rate (%)': st.column_config.NumberColumn('🔴 SELL Win Rate (%)', format='%.1f%%'),
+        'Avg Return (%)': st.column_config.NumberColumn('Avg Return (%)', format='%+.2f%%'),
+        'Cumulative Return (%)': st.column_config.NumberColumn('Cumulative Return (%)', format='%+.1f%%')
+    }
+    
     yc1, yc2 = st.columns([1.5, 1.5])
     with yc1:
-        st.dataframe(y_df_disp.drop(columns=['raw_signals', 'raw_wr']), width="stretch", hide_index=True)
+        st.dataframe(y_df_disp.drop(columns=['raw_signals', 'raw_wr']), column_config=year_port_cfg, width="stretch", hide_index=True)
+
         
     with yc2:
         fig_y = make_subplots(specs=[[{"secondary_y": True}]])
@@ -952,15 +966,20 @@ def render_portfolio_combined_view(
             
         st.markdown("<br>", unsafe_allow_html=True)
         disp_stocks = stock_summary_df.copy()
-        disp_stocks['Win Rate (%)'] = disp_stocks['Win Rate (%)'].map(lambda x: f"{x:.1f}%")
-        disp_stocks['Profit Factor'] = disp_stocks['Profit Factor'].map(lambda x: f"{x:.2f}" if not np.isnan(x) else "N/A")
-        disp_stocks['Avg Return (%)'] = disp_stocks['Avg Return (%)'].map(lambda x: f"{x:+.2f}%")
-        disp_stocks['Total Return (%)'] = disp_stocks['Total Return (%)'].map(lambda x: f"{x:+.1f}%")
-        disp_stocks['Best Trade (%)'] = disp_stocks['Best Trade (%)'].map(lambda x: f"{x:+.1f}%")
-        disp_stocks['Worst Trade (%)'] = disp_stocks['Worst Trade (%)'].map(lambda x: f"{x:+.1f}%")
-        disp_stocks['Avg Holding (Bars)'] = disp_stocks['Avg Holding (Bars)'].map(lambda x: f"{x:.1f}")
-        
-        st.dataframe(disp_stocks, width="stretch", hide_index=True)
+        stock_cfg = {
+            'Trades': st.column_config.NumberColumn('Trades', format='%d'),
+            'Win Rate (%)': st.column_config.NumberColumn('Win Rate (%)', format='%.1f%%'),
+            'Wins': st.column_config.NumberColumn('Wins', format='%d'),
+            'Losses': st.column_config.NumberColumn('Losses', format='%d'),
+            'Profit Factor': st.column_config.NumberColumn('Profit Factor', format='%.2f'),
+            'Avg Return (%)': st.column_config.NumberColumn('Avg Return (%)', format='%+.2f%%'),
+            'Total Return (%)': st.column_config.NumberColumn('Total Return (%)', format='%+.1f%%'),
+            'Best Trade (%)': st.column_config.NumberColumn('Best Trade (%)', format='%+.1f%%'),
+            'Worst Trade (%)': st.column_config.NumberColumn('Worst Trade (%)', format='%+.1f%%'),
+            'Avg Holding (Bars)': st.column_config.NumberColumn('Avg Holding (Bars)', format='%.1f')
+        }
+        st.dataframe(disp_stocks, column_config=stock_cfg, width="stretch", hide_index=True)
+
         
     # =============================================================
     # 5. CUMULATIVE PORTFOLIO GROWTH CURVE
@@ -1041,9 +1060,6 @@ def render_portfolio_combined_view(
     disp_t['signal_date'] = pd.to_datetime(disp_t['signal_date']).dt.strftime('%Y-%m-%d')
     disp_t['entry_date'] = pd.to_datetime(disp_t['entry_date']).dt.strftime('%Y-%m-%d')
     disp_t['exit_date'] = pd.to_datetime(disp_t['exit_date']).dt.strftime('%Y-%m-%d')
-    disp_t['entry_price'] = disp_t['entry_price'].map(lambda x: f"₹{x:,.2f}")
-    disp_t['exit_price'] = disp_t['exit_price'].map(lambda x: f"₹{x:,.2f}")
-    disp_t['pnl_pct'] = disp_t['pnl_pct'].map(lambda x: f"{x:+.2f}%")
     disp_t = disp_t.rename(columns={
         'symbol': 'Symbol',
         'signal_date': 'Signal Date',
@@ -1057,7 +1073,15 @@ def render_portfolio_combined_view(
         'holding_bars': 'Holding Bars',
         'pnl_pct': 'Return (%)'
     })
-    st.dataframe(disp_t, width="stretch", hide_index=True)
+    
+    trade_port_cfg = {
+        'Entry Price': st.column_config.NumberColumn('Entry Price', format='₹%.2f'),
+        'Exit Price': st.column_config.NumberColumn('Exit Price', format='₹%.2f'),
+        'Holding Bars': st.column_config.NumberColumn('Holding Bars', format='%d'),
+        'Return (%)': st.column_config.NumberColumn('Return (%)', format='%+.2f%%')
+    }
+    st.dataframe(disp_t, column_config=trade_port_cfg, width="stretch", hide_index=True)
+
     
     csv_bytes = trades_df.to_csv(index=False).encode('utf-8')
     st.download_button(
@@ -1534,12 +1558,6 @@ def render_rsi_divergence_section(analytics_engine):
             ]
             sk_table = skipped_df[sk_disp_cols].copy()
             sk_table['signal_date'] = pd.to_datetime(sk_table['signal_date']).dt.strftime('%Y-%m-%d')
-            sk_table['signal_close'] = sk_table['signal_close'].map(lambda x: f"₹{x:,.2f}")
-            sk_table['ema_val'] = sk_table['ema_val'].map(lambda x: f"₹{x:,.2f}")
-            sk_table['entry_price'] = sk_table['entry_price'].map(lambda x: f"₹{x:,.2f}")
-            sk_table['exit_price'] = sk_table['exit_price'].map(lambda x: f"₹{x:,.2f}")
-            sk_table['pnl_pts'] = sk_table['pnl_pts'].map(lambda x: f"{x:+,.1f}")
-            sk_table['pnl_pct'] = sk_table['pnl_pct'].map(lambda x: f"{x:+.2f}%")
             
             sk_table = sk_table.rename(columns={
                 'signal_date': 'Signal Date',
@@ -1554,7 +1572,17 @@ def render_rsi_divergence_section(analytics_engine):
                 'pnl_pct': 'Hypothetical PnL (%)',
                 'verdict': 'Filter Outcome / Verdict'
             })
-            st.dataframe(sk_table, width="stretch", hide_index=True)
+            
+            sk_cfg = {
+                'Signal Close': st.column_config.NumberColumn('Signal Close', format='₹%.2f'),
+                f'{ema_period} EMA Price': st.column_config.NumberColumn(f'{ema_period} EMA Price', format='₹%.2f'),
+                'Hypothetical Entry': st.column_config.NumberColumn('Hypothetical Entry', format='₹%.2f'),
+                'Hypothetical Exit': st.column_config.NumberColumn('Hypothetical Exit', format='₹%.2f'),
+                'Hypothetical PnL (Pts)': st.column_config.NumberColumn('Hypothetical PnL (Pts)', format='%+,.1f'),
+                'Hypothetical PnL (%)': st.column_config.NumberColumn('Hypothetical PnL (%)', format='%+.2f%%')
+            }
+            st.dataframe(sk_table, column_config=sk_cfg, width="stretch", hide_index=True)
+
             
             sk_csv = skipped_df.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -1734,31 +1762,43 @@ def render_rsi_divergence_section(analytics_engine):
         b_df = y_df[y_df['action'] == 'BUY']
         n_b = len(b_df)
         w_b = len(b_df[b_df['win'] == True])
-        wr_b = f"{(w_b / n_b) * 100.0:.1f}% ({w_b}/{n_b})" if n_b > 0 else "-"
+        wr_b = (w_b / n_b * 100.0) if n_b > 0 else np.nan
         
         s_df = y_df[y_df['action'] == 'SELL']
         n_s = len(s_df)
         w_s = len(s_df[s_df['win'] == True])
-        wr_s = f"{(w_s / n_s) * 100.0:.1f}% ({w_s}/{n_s})" if n_s > 0 else "-"
+        wr_s = (w_s / n_s * 100.0) if n_s > 0 else np.nan
         
         y_stats.append({
-            'Year': yr,
-            'Trades': n_t,
-            'Wins': w_t,
-            'Losses': n_t - w_t,
-            'Win Rate (%)': f"{wr:.1f}%",
-            '🟢 BUY Win Rate': wr_b,
-            '🔴 SELL Win Rate': wr_s,
-            'Net Points': f"{pnl_pts:+,.1f}",
-            'Avg Trade (%)': f"{avg_pct:+.2f}%",
+            'Year': int(yr),
+            'Trades': int(n_t),
+            'Wins': int(w_t),
+            'Losses': int(n_t - w_t),
+            'Win Rate (%)': float(wr),
+            '🟢 BUY Win Rate (%)': float(wr_b) if not np.isnan(wr_b) else np.nan,
+            '🔴 SELL Win Rate (%)': float(wr_s) if not np.isnan(wr_s) else np.nan,
+            'Net Points': float(pnl_pts),
+            'Avg Trade (%)': float(avg_pct),
             'raw_pnl': pnl_pts
         })
         
     y_df_display = pd.DataFrame(y_stats)
     
+    single_year_cfg = {
+        'Year': st.column_config.NumberColumn('Year', format='%d'),
+        'Trades': st.column_config.NumberColumn('Trades', format='%d'),
+        'Wins': st.column_config.NumberColumn('Wins', format='%d'),
+        'Losses': st.column_config.NumberColumn('Losses', format='%d'),
+        'Win Rate (%)': st.column_config.NumberColumn('Win Rate (%)', format='%.1f%%'),
+        '🟢 BUY Win Rate (%)': st.column_config.NumberColumn('🟢 BUY Win Rate (%)', format='%.1f%%'),
+        '🔴 SELL Win Rate (%)': st.column_config.NumberColumn('🔴 SELL Win Rate (%)', format='%.1f%%'),
+        'Net Points': st.column_config.NumberColumn('Net Points', format='%+,.1f'),
+        'Avg Trade (%)': st.column_config.NumberColumn('Avg Trade (%)', format='%+.2f%%')
+    }
+    
     yc1, yc2 = st.columns([1.5, 1.5])
     with yc1:
-        st.dataframe(y_df_display.drop(columns=['raw_pnl']), width="stretch", hide_index=True)
+        st.dataframe(y_df_display.drop(columns=['raw_pnl']), column_config=single_year_cfg, width="stretch", hide_index=True)
     with yc2:
         fig_y = go.Figure()
         colors = ['#00d26a' if p >= 0 else '#ef4444' for p in y_df_display['raw_pnl']]
@@ -1790,14 +1830,34 @@ def render_rsi_divergence_section(analytics_engine):
     trade_table['signal_date'] = pd.to_datetime(trade_table['signal_date']).dt.strftime('%Y-%m-%d')
     trade_table['entry_date'] = pd.to_datetime(trade_table['entry_date']).dt.strftime('%Y-%m-%d')
     trade_table['exit_date'] = pd.to_datetime(trade_table['exit_date']).dt.strftime('%Y-%m-%d')
-    trade_table['entry_price'] = trade_table['entry_price'].map(lambda x: f"₹{x:,.2f}")
-    trade_table['sl_price'] = trade_table['sl_price'].map(lambda x: f"₹{x:,.2f}")
-    trade_table['tgt_price'] = trade_table['tgt_price'].map(lambda x: f"₹{x:,.2f}" if not np.isnan(x) else "Open")
-    trade_table['exit_price'] = trade_table['exit_price'].map(lambda x: f"₹{x:,.2f}")
-    trade_table['pnl_pts'] = trade_table['pnl_pts'].map(lambda x: f"{x:+,.1f}")
-    trade_table['pnl_pct'] = trade_table['pnl_pct'].map(lambda x: f"{x:+.2f}%")
     
-    st.dataframe(trade_table, width="stretch", hide_index=True)
+    trade_table = trade_table.rename(columns={
+        'signal_date': 'Signal Date',
+        'entry_date': 'Entry Date',
+        'exit_date': 'Exit Date',
+        'action': 'Action',
+        'reason': 'Reason',
+        'entry_price': 'Entry Price',
+        'sl_price': 'Stop Loss',
+        'tgt_price': 'Target',
+        'exit_price': 'Exit Price',
+        'exit_reason': 'Exit Reason',
+        'holding_bars': 'Holding Bars',
+        'pnl_pts': 'PnL (Points)',
+        'pnl_pct': 'PnL (%)'
+    })
+    
+    single_trade_cfg = {
+        'Entry Price': st.column_config.NumberColumn('Entry Price', format='₹%.2f'),
+        'Stop Loss': st.column_config.NumberColumn('Stop Loss', format='₹%.2f'),
+        'Target': st.column_config.NumberColumn('Target', format='₹%.2f'),
+        'Exit Price': st.column_config.NumberColumn('Exit Price', format='₹%.2f'),
+        'Holding Bars': st.column_config.NumberColumn('Holding Bars', format='%d'),
+        'PnL (Points)': st.column_config.NumberColumn('PnL (Points)', format='%+,.1f'),
+        'PnL (%)': st.column_config.NumberColumn('PnL (%)', format='%+.2f%%')
+    }
+    st.dataframe(trade_table, column_config=single_trade_cfg, width="stretch", hide_index=True)
+
     
     # Download Trade Log CSV
     csv_bytes = trades_df.to_csv(index=False).encode('utf-8')
