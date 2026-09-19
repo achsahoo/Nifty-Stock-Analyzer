@@ -273,6 +273,10 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
     avg_loss_pts = losses['pnl_pts'].mean() if not losses.empty else 0.0
     reward_risk_ratio = abs(avg_win_pts / avg_loss_pts) if abs(avg_loss_pts) > 0 else np.nan
     
+    avg_holding_days = trades_df['holding_days'].mean() if 'holding_days' in trades_df.columns and not trades_df.empty else 0.0
+    min_holding_days = int(trades_df['holding_days'].min()) if 'holding_days' in trades_df.columns and not trades_df.empty else 0
+    max_holding_days = int(trades_df['holding_days'].max()) if 'holding_days' in trades_df.columns and not trades_df.empty else 0
+
     return {
         'total_trades': total_trades,
         'win_rate': win_rate,
@@ -284,8 +288,12 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
         'avg_loss_pts': avg_loss_pts,
         'reward_risk_ratio': reward_risk_ratio,
         'gross_profit': gross_profit,
-        'gross_loss': gross_loss
+        'gross_loss': gross_loss,
+        'avg_holding_days': avg_holding_days,
+        'min_holding_days': min_holding_days,
+        'max_holding_days': max_holding_days
     }
+
 
 # =============================================================
 # BACKTEST SIMULATION ENGINE
@@ -415,6 +423,15 @@ def run_rsi_divergence_backtest(
         pnl_pct = (pnl_pts / entry_price) * 100.0
         is_win = pnl_pts > 0
         
+        e_dt = pd.to_datetime(entry_date)
+        x_dt = pd.to_datetime(exit_date)
+        cal_days = int((x_dt - e_dt).days)
+        bar_interval = int((df['date'].iloc[1] - df['date'].iloc[0]).days) if len(df) > 1 else 1
+        if cal_days == 0:
+            holding_days = 7 if bar_interval > 4 else (30 if bar_interval > 20 else 1)
+        else:
+            holding_days = cal_days
+
         trade_data = {
             'signal_date': sig['signal_date'],
             'entry_date': entry_date,
@@ -428,6 +445,7 @@ def run_rsi_divergence_backtest(
             'exit_price': exit_price,
             'exit_reason': exit_reason,
             'holding_bars': exit_bar - e_bar + 1,
+            'holding_days': holding_days,
             'pnl_pts': pnl_pts,
             'pnl_pct': pnl_pct,
             'win': is_win,
@@ -435,6 +453,7 @@ def run_rsi_divergence_backtest(
             'tgt_desc': tgt_desc
         }
         all_trades.append(trade_data)
+
         
         if enable_ema_filter:
             close_price = df['close'].iloc[ref_bar]
@@ -554,6 +573,9 @@ def run_portfolio_combined_backtest(
                     'Total Return (%)': t_df['pnl_pct'].sum(),
                     'Best Trade (%)': t_df['pnl_pct'].max(),
                     'Worst Trade (%)': t_df['pnl_pct'].min(),
+                    'Avg Holding (Days)': t_df['holding_days'].mean(),
+                    'Min Holding (Days)': int(t_df['holding_days'].min()),
+                    'Max Holding (Days)': int(t_df['holding_days'].max()),
                     'Avg Holding (Bars)': t_df['holding_bars'].mean()
                 })
                 
@@ -619,10 +641,14 @@ def run_portfolio_combined_backtest(
             'profit_factor': pf,
             'best_trade_pct': df_trades['pnl_pct'].max(),
             'worst_trade_pct': df_trades['pnl_pct'].min(),
-            'avg_holding_bars': df_trades['holding_bars'].mean()
+            'avg_holding_bars': df_trades['holding_bars'].mean(),
+            'avg_holding_days': df_trades['holding_days'].mean(),
+            'min_holding_days': int(df_trades['holding_days'].min()),
+            'max_holding_days': int(df_trades['holding_days'].max())
         }
     else:
         port_stats = {}
+
         
     return df_trades, df_skips, df_stocks, port_stats
 
@@ -715,7 +741,11 @@ def render_portfolio_combined_view(
     pf = port_stats['profit_factor']
     pf_str = f"{pf:.2f}" if not np.isnan(pf) else "N/A"
     
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    avg_h_days = port_stats.get('avg_holding_days', 0.0)
+    min_h_days = port_stats.get('min_holding_days', 0)
+    max_h_days = port_stats.get('max_holding_days', 0)
+    
+    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
     
     wr_color = "#00d26a" if win_rate >= 50 else "#f8312f"
     with m1:
@@ -772,6 +802,15 @@ def render_portfolio_combined_view(
             <span class='metric-label'>Avg Trade Return</span>
             <div class='metric-value' style='color:{avg_col};'>{avg_trade_pct:+.2f}%</div>
             <span style='font-size:11px;color:#94a3b8;'>Profit Factor: {pf_str}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with m7:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Avg Holding Days</span>
+            <div class='metric-value' style='color:#a78bfa;'>{avg_h_days:.1f}d</div>
+            <span style='font-size:11px;color:#94a3b8;'>Min: {min_h_days}d | Max: {max_h_days}d</span>
         </div>
         """, unsafe_allow_html=True)
         
@@ -893,6 +932,7 @@ def render_portfolio_combined_view(
             '🔴 SELL Win Rate (%)': float(wr_s) if not np.isnan(wr_s) else np.nan,
             'Avg Return (%)': float(avg_pct),
             'Cumulative Return (%)': float(cum_pct),
+            'Avg Holding (Days)': float(y_df['holding_days'].mean()) if 'holding_days' in y_df.columns and not y_df.empty else 0.0,
             'raw_signals': n_t,
             'raw_wr': wr
         })
@@ -909,7 +949,8 @@ def render_portfolio_combined_view(
         '🟢 BUY Win Rate (%)': st.column_config.NumberColumn('🟢 BUY Win Rate (%)', format='%.1f%%'),
         '🔴 SELL Win Rate (%)': st.column_config.NumberColumn('🔴 SELL Win Rate (%)', format='%.1f%%'),
         'Avg Return (%)': st.column_config.NumberColumn('Avg Return (%)', format='%+.2f%%'),
-        'Cumulative Return (%)': st.column_config.NumberColumn('Cumulative Return (%)', format='%+.1f%%')
+        'Cumulative Return (%)': st.column_config.NumberColumn('Cumulative Return (%)', format='%+.1f%%'),
+        'Avg Holding (Days)': st.column_config.NumberColumn('Avg Holding (Days)', format='%.1f')
     }
     
     yc1, yc2 = st.columns([1.5, 1.5])
@@ -976,6 +1017,9 @@ def render_portfolio_combined_view(
             'Total Return (%)': st.column_config.NumberColumn('Total Return (%)', format='%+.1f%%'),
             'Best Trade (%)': st.column_config.NumberColumn('Best Trade (%)', format='%+.1f%%'),
             'Worst Trade (%)': st.column_config.NumberColumn('Worst Trade (%)', format='%+.1f%%'),
+            'Avg Holding (Days)': st.column_config.NumberColumn('Avg Holding (Days)', format='%.1f'),
+            'Min Holding (Days)': st.column_config.NumberColumn('Min Holding (Days)', format='%d'),
+            'Max Holding (Days)': st.column_config.NumberColumn('Max Holding (Days)', format='%d'),
             'Avg Holding (Bars)': st.column_config.NumberColumn('Avg Holding (Bars)', format='%.1f')
         }
         st.dataframe(disp_stocks, column_config=stock_cfg, width="stretch", hide_index=True)
@@ -1054,7 +1098,7 @@ def render_portfolio_combined_view(
     elif sel_out == "Losses Only":
         filt_df = filt_df[filt_df['win'] == False]
         
-    disp_cols = ['symbol', 'signal_date', 'entry_date', 'exit_date', 'action', 'reason', 'entry_price', 'exit_price', 'exit_reason', 'holding_bars', 'pnl_pct']
+    disp_cols = ['symbol', 'signal_date', 'entry_date', 'exit_date', 'action', 'reason', 'entry_price', 'exit_price', 'exit_reason', 'holding_bars', 'holding_days', 'pnl_pct']
     
     disp_t = filt_df[disp_cols].copy()
     disp_t['signal_date'] = pd.to_datetime(disp_t['signal_date']).dt.strftime('%Y-%m-%d')
@@ -1071,6 +1115,7 @@ def render_portfolio_combined_view(
         'exit_price': 'Exit Price',
         'exit_reason': 'Exit Reason',
         'holding_bars': 'Holding Bars',
+        'holding_days': 'Holding Days',
         'pnl_pct': 'Return (%)'
     })
     
@@ -1078,6 +1123,7 @@ def render_portfolio_combined_view(
         'Entry Price': st.column_config.NumberColumn('Entry Price', format='₹%.2f'),
         'Exit Price': st.column_config.NumberColumn('Exit Price', format='₹%.2f'),
         'Holding Bars': st.column_config.NumberColumn('Holding Bars', format='%d'),
+        'Holding Days': st.column_config.NumberColumn('Holding Days', format='%d'),
         'Return (%)': st.column_config.NumberColumn('Return (%)', format='%+.2f%%')
     }
     st.dataframe(disp_t, column_config=trade_port_cfg, width="stretch", hide_index=True)
@@ -1391,7 +1437,7 @@ def render_rsi_divergence_section(analytics_engine):
     # TOP PERFORMANCE METRIC CARDS
     # =============================================================
     st.markdown("---")
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
     
     total_trades = stats['total_trades']
     win_rate = stats['win_rate']
@@ -1399,6 +1445,9 @@ def render_rsi_divergence_section(analytics_engine):
     pf = stats['profit_factor']
     max_dd = stats['max_dd_pts']
     avg_trade_pct = stats['avg_trade_pct']
+    avg_h_days = stats.get('avg_holding_days', 0.0)
+    min_h_days = stats.get('min_holding_days', 0)
+    max_h_days = stats.get('max_holding_days', 0)
     
     pnl_class = "metric-value" if total_pnl >= 0 else "metric-value-neg"
     pts_label = "Index Points" if selected_asset == "NIFTY 50" else "Stock Price Points"
@@ -1419,6 +1468,8 @@ def render_rsi_divergence_section(analytics_engine):
     with m6:
         avg_col = "#00d26a" if avg_trade_pct >= 0 else "#f8312f"
         st.markdown(f"""<div class='metric-card'><span class='metric-label'>Avg Trade %</span><div class='metric-value' style='color:{avg_col};'>{avg_trade_pct:+.2f}%</div><span style='font-size:11px;color:#94a3b8;'>Per Executed Trade</span></div>""", unsafe_allow_html=True)
+    with m7:
+        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Avg Holding Days</span><div class='metric-value' style='color:#a78bfa;'>{avg_h_days:.1f}d</div><span style='font-size:11px;color:#94a3b8;'>Min: {min_h_days}d | Max: {max_h_days}d</span></div>""", unsafe_allow_html=True)
 
     # =============================================================
     # EXTRA INFORMATION FOR SKIPPED SIGNALS (EMA FILTER AUDIT)
@@ -1541,6 +1592,12 @@ def render_rsi_divergence_section(analytics_engine):
                 'Unfiltered (All Signals)': f"{all_stats.get('avg_trade_pct', 0):+.2f}%",
                 f'With {ema_period} EMA Filter': f"{avg_trade_pct:+.2f}%",
                 'Filter Impact / Gain': f"{avg_trade_pct - all_stats.get('avg_trade_pct', 0):+.2f}%"
+            },
+            {
+                'Metric Dimension': 'Avg Holding Days',
+                'Unfiltered (All Signals)': f"{all_stats.get('avg_holding_days', 0.0):.1f}d",
+                f'With {ema_period} EMA Filter': f"{avg_h_days:.1f}d",
+                'Filter Impact / Gain': f"{avg_h_days - all_stats.get('avg_holding_days', 0.0):+.1f}d"
             }
         ])
         st.dataframe(comp_df, width="stretch", hide_index=True)
@@ -1779,6 +1836,7 @@ def render_rsi_divergence_section(analytics_engine):
             '🔴 SELL Win Rate (%)': float(wr_s) if not np.isnan(wr_s) else np.nan,
             'Net Points': float(pnl_pts),
             'Avg Trade (%)': float(avg_pct),
+            'Avg Holding (Days)': float(y_df['holding_days'].mean()) if 'holding_days' in y_df.columns and not y_df.empty else 0.0,
             'raw_pnl': pnl_pts
         })
         
@@ -1793,7 +1851,8 @@ def render_rsi_divergence_section(analytics_engine):
         '🟢 BUY Win Rate (%)': st.column_config.NumberColumn('🟢 BUY Win Rate (%)', format='%.1f%%'),
         '🔴 SELL Win Rate (%)': st.column_config.NumberColumn('🔴 SELL Win Rate (%)', format='%.1f%%'),
         'Net Points': st.column_config.NumberColumn('Net Points', format='%+,.1f'),
-        'Avg Trade (%)': st.column_config.NumberColumn('Avg Trade (%)', format='%+.2f%%')
+        'Avg Trade (%)': st.column_config.NumberColumn('Avg Trade (%)', format='%+.2f%%'),
+        'Avg Holding (Days)': st.column_config.NumberColumn('Avg Holding (Days)', format='%.1f')
     }
     
     yc1, yc2 = st.columns([1.5, 1.5])
@@ -1824,7 +1883,7 @@ def render_rsi_divergence_section(analytics_engine):
     # =============================================================
     st.markdown("### 📋 Complete Executed Trade Log")
     
-    disp_cols = ['signal_date', 'entry_date', 'exit_date', 'action', 'reason', 'entry_price', 'sl_price', 'tgt_price', 'exit_price', 'exit_reason', 'holding_bars', 'pnl_pts', 'pnl_pct']
+    disp_cols = ['signal_date', 'entry_date', 'exit_date', 'action', 'reason', 'entry_price', 'sl_price', 'tgt_price', 'exit_price', 'exit_reason', 'holding_bars', 'holding_days', 'pnl_pts', 'pnl_pct']
     
     trade_table = trades_df[disp_cols].copy()
     trade_table['signal_date'] = pd.to_datetime(trade_table['signal_date']).dt.strftime('%Y-%m-%d')
@@ -1843,6 +1902,7 @@ def render_rsi_divergence_section(analytics_engine):
         'exit_price': 'Exit Price',
         'exit_reason': 'Exit Reason',
         'holding_bars': 'Holding Bars',
+        'holding_days': 'Holding Days',
         'pnl_pts': 'PnL (Points)',
         'pnl_pct': 'PnL (%)'
     })
@@ -1853,6 +1913,7 @@ def render_rsi_divergence_section(analytics_engine):
         'Target': st.column_config.NumberColumn('Target', format='₹%.2f'),
         'Exit Price': st.column_config.NumberColumn('Exit Price', format='₹%.2f'),
         'Holding Bars': st.column_config.NumberColumn('Holding Bars', format='%d'),
+        'Holding Days': st.column_config.NumberColumn('Holding Days', format='%d'),
         'PnL (Points)': st.column_config.NumberColumn('PnL (Points)', format='%+,.1f'),
         'PnL (%)': st.column_config.NumberColumn('PnL (%)', format='%+.2f%%')
     }
