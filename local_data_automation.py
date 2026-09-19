@@ -240,7 +240,13 @@ def sync_timeframe_data(tv, sym, tf_name, interval, full_bars, sync_mode="increm
         if new_bars_count > 0:
             detail = f"+{new_bars_count} new bars (to {new_last_dt.strftime('%d-%b-%Y')})"
         else:
-            detail = f"Updated close ({new_last_dt.strftime('%d-%b-%Y')})"
+            if tf_name.lower() == "weekly":
+                w_day = new_last_dt.weekday()
+                days_to_fri = 4 - w_day if w_day <= 4 else 0
+                fri_dt = new_last_dt + pd.Timedelta(days=days_to_fri)
+                detail = f"Updated Friday close (Week of {new_last_dt.strftime('%d-%b')} closed Fri {fri_dt.strftime('%d-%b')})"
+            else:
+                detail = f"Updated close ({new_last_dt.strftime('%d-%b-%Y')})"
         return True, detail, new_bars_count, None
     else:
         # Full sync or new stock
@@ -779,18 +785,37 @@ def get_nifty_dataset_overview():
     weekly_path = os.path.join(LOCAL_NIFTY_HTF_DIR, "nifty_weekly_data_raw.parquet")
     if not os.path.exists(weekly_path) and ALT_NIFTY_HTF_DIRS:
         weekly_path = os.path.join(ALT_NIFTY_HTF_DIRS[0], "nifty_weekly_data_raw.parquet")
-    weekly_dt = get_parquet_latest_date(weekly_path)
+    weekly_dt = None
     weekly_rows = 0
+    weekly_close = None
+    weekly_friday_dt = None
     if os.path.exists(weekly_path):
         try:
-            weekly_rows = len(pd.read_parquet(weekly_path, columns=['datetime']))
+            df_w_raw = pd.read_parquet(weekly_path)
+            if not df_w_raw.empty:
+                weekly_rows = len(df_w_raw)
+                dt_col_w = pd.to_datetime(df_w_raw['datetime'])
+                if dt_col_w.dt.tz is not None:
+                    dt_col_w = dt_col_w.dt.tz_localize(None)
+                weekly_dt = dt_col_w.iloc[-1]
+                if 'close' in df_w_raw.columns:
+                    weekly_close = float(df_w_raw['close'].iloc[-1])
+                w_day = weekly_dt.weekday()
+                days_to_fri = 4 - w_day if w_day <= 4 else 0
+                weekly_friday_dt = weekly_dt + pd.Timedelta(days=days_to_fri)
         except Exception:
             pass
 
     return {
         "1min": {"dt": one_min_dt, "rows": one_min_rows, "path": one_min_path},
         "daily": {"dt": daily_dt, "rows": daily_rows, "path": daily_path},
-        "weekly": {"dt": weekly_dt, "rows": weekly_rows, "path": weekly_path},
+        "weekly": {
+            "dt": weekly_dt,
+            "rows": weekly_rows,
+            "path": weekly_path,
+            "close": weekly_close,
+            "friday_dt": weekly_friday_dt
+        },
         "now_date": now_date
     }
 
@@ -1003,13 +1028,22 @@ def sync_nifty_htf_data(tv, tf_name, interval, full_bars=8000, sync_mode="increm
         except Exception:
             pass
 
+    last_close_val = df_combined['close'].iloc[-1] if 'close' in df_combined.columns else None
+    close_str = f", Close: ₹{last_close_val:,.2f}" if last_close_val is not None else ""
+
     if df_existing is not None and last_dt is not None:
         if new_bars_count > 0:
-            detail = f"+{new_bars_count} new bars (to {new_last_dt.strftime('%d-%b-%Y')})"
+            detail = f"+{new_bars_count} new bars (to {new_last_dt.strftime('%d-%b-%Y')}{close_str})"
         else:
-            detail = f"Updated close ({new_last_dt.strftime('%d-%b-%Y')})"
+            if tf_name.lower() == "weekly":
+                w_day = new_last_dt.weekday()
+                days_to_fri = 4 - w_day if w_day <= 4 else 0
+                fri_dt = new_last_dt + pd.Timedelta(days=days_to_fri)
+                detail = f"Updated Friday close (Week of {new_last_dt.strftime('%d-%b')} closed Fri {fri_dt.strftime('%d-%b')}{close_str})"
+            else:
+                detail = f"Updated latest close ({new_last_dt.strftime('%d-%b-%Y')}{close_str})"
     else:
-        detail = f"Full {new_bars_count} bars (to {new_last_dt.strftime('%d-%b-%Y')})"
+        detail = f"Full {new_bars_count} bars (to {new_last_dt.strftime('%d-%b-%Y')}{close_str})"
 
     return True, detail, new_bars_count, None
 
@@ -1040,9 +1074,17 @@ def render_nifty_downloader_section():
         st.markdown(f"""<div class='metric-card'><span class='metric-label'>Daily Index Parquet</span><div class='metric-value' style='color:#a78bfa;'>{rows_d}</div><span style='font-size:11px;color:#94a3b8;'>Last: {dt_d_str}</span></div>""", unsafe_allow_html=True)
     with col3:
         dt_w = overview["weekly"]["dt"]
-        dt_w_str = dt_w.strftime('%d-%b-%Y') if dt_w else "Missing"
+        close_w = overview["weekly"].get("close", None)
+        fri_dt = overview["weekly"].get("friday_dt", None)
+        if dt_w:
+            fri_str = fri_dt.strftime('%d-%b') if fri_dt else dt_w.strftime('%d-%b')
+            dt_w_str = f"Week of {dt_w.strftime('%d-%b')}"
+            close_info = f"Closed: ₹{close_w:,.2f} (Fri {fri_str})" if close_w is not None else f"Fri {fri_str}"
+        else:
+            dt_w_str = "Missing"
+            close_info = "No Data"
         rows_w = f"{overview['weekly']['rows']:,}" if overview['weekly']['rows'] else "0"
-        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Weekly Index Parquet</span><div class='metric-value' style='color:#fbbf24;'>{rows_w}</div><span style='font-size:11px;color:#94a3b8;'>Last: {dt_w_str}</span></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Weekly Index Parquet</span><div class='metric-value' style='color:#fbbf24;'>{rows_w}</div><span style='font-size:11px;color:#94a3b8;'>{dt_w_str} | <strong style='color:#00d26a;'>{close_info}</strong></span></div>""", unsafe_allow_html=True)
     with col4:
         st.markdown(f"""<div class='metric-card'><span class='metric-label'>Today's Date</span><div class='metric-value' style='color:#00d26a;'>{now_date.strftime('%d-%b-%Y')}</div><span style='font-size:11px;color:#94a3b8;'>Live Trading Session</span></div>""", unsafe_allow_html=True)
         
