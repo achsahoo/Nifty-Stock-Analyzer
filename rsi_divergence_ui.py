@@ -718,9 +718,9 @@ def simulate_capital_and_charges(
         
         # Calculate share quantity
         if current_balance >= entry_price and allocated_capital >= entry_price:
-            qty = max(1, int(allocated_capital // entry_price))
+            qty = max(1, min(1_000_000_000, int(allocated_capital // entry_price)))
             if qty * entry_price > current_balance:
-                qty = max(1, int(current_balance // entry_price))
+                qty = max(1, min(1_000_000_000, int(current_balance // entry_price)))
         elif current_balance >= entry_price:
             qty = 1
         else:
@@ -1863,6 +1863,70 @@ def render_portfolio_combined_view(
     trades_df_sorted['peak_pnl_pct'] = trades_df_sorted['cum_pnl_pct'].cummax()
     trades_df_sorted['drawdown_pct'] = trades_df_sorted['cum_pnl_pct'] - trades_df_sorted['peak_pnl_pct']
     
+    # Calculate portfolio drawdown episodes and days underwater
+    peak_val = 0.0
+    peak_date = pd.to_datetime(trades_df_sorted['entry_date'].iloc[0])
+    dd_days_col = []
+    port_dd_episodes = []
+    in_port_dd = False
+    ep_trough_val = 0.0
+    ep_trough_date = peak_date
+    ep_peak_date = peak_date
+
+    for idx, row in trades_df_sorted.iterrows():
+        cum = float(row['cum_pnl_pct'])
+        exit_dt = pd.to_datetime(row['exit_date'])
+        if cum >= peak_val:
+            if in_port_dd:
+                ep_depth = ep_trough_val - peak_val
+                port_dd_episodes.append({
+                    'peak_date': ep_peak_date,
+                    'trough_date': ep_trough_date,
+                    'rec_date': exit_dt,
+                    'dd_pct': ep_depth,
+                    'recovery_days': (exit_dt - ep_peak_date).days,
+                    'recovered': True
+                })
+                in_port_dd = False
+            peak_val = cum
+            peak_date = exit_dt
+            dd_days_col.append(0)
+        else:
+            if not in_port_dd:
+                in_port_dd = True
+                ep_peak_date = peak_date
+                ep_trough_val = cum
+                ep_trough_date = exit_dt
+            else:
+                if cum < ep_trough_val:
+                    ep_trough_val = cum
+                    ep_trough_date = exit_dt
+            days_under = (exit_dt - peak_date).days
+            dd_days_col.append(days_under)
+
+    if in_port_dd:
+        last_exit_dt = pd.to_datetime(trades_df_sorted['exit_date'].iloc[-1])
+        port_dd_episodes.append({
+            'peak_date': ep_peak_date,
+            'trough_date': ep_trough_date,
+            'rec_date': None,
+            'dd_pct': ep_trough_val - peak_val,
+            'recovery_days': (last_exit_dt - ep_peak_date).days,
+            'recovered': False
+        })
+
+    trades_df_sorted['dd_days'] = dd_days_col
+    port_max_dd_pct = float(trades_df_sorted['drawdown_pct'].min())
+    if port_dd_episodes:
+        max_ep = min(port_dd_episodes, key=lambda x: x['dd_pct'])
+        port_max_dd_days = max_ep['recovery_days']
+        port_max_dd_peak = max_ep['peak_date'].strftime('%Y-%m-%d')
+        port_max_dd_rec = max_ep['rec_date'].strftime('%Y-%m-%d') if max_ep['rec_date'] is not None else 'Ongoing'
+    else:
+        port_max_dd_days = 0
+        port_max_dd_peak = '-'
+        port_max_dd_rec = '-'
+
     fig_peq = make_subplots(
         rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3],
         subplot_titles=("Cumulative Portfolio % Return Across All Executed Signals", "Portfolio Drawdown (%)")
@@ -1906,16 +1970,47 @@ def render_portfolio_combined_view(
     # 6. COMPLETE FILTERABLE EXECUTED TRADE LOG
     # =============================================================
     st.markdown("### 📋 Complete Portfolio Executed Trade Log")
+
+    # Drawdown KPI Summary Strip
+    pk1, pk2, pk3 = st.columns([1.5, 2.0, 1.5])
+    with pk1:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Portfolio Max Drawdown</span>
+            <div class='metric-value-neg'>{port_max_dd_pct:.2f}%</div>
+            <span style='font-size:11px;color:#f8312f;'>Peak-to-Trough Decline</span>
+        </div>
+        """, unsafe_allow_html=True)
+    with pk2:
+        rec_period_str = f"{port_max_dd_peak} ➔ {port_max_dd_rec}"
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Max DD Days</span>
+            <div class='metric-value' style='color:#38bdf8;'>{port_max_dd_days:,} Days</div>
+            <span style='font-size:11px;color:#94a3b8;'>Period: {rec_period_str}</span>
+        </div>
+        """, unsafe_allow_html=True)
+    with pk3:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Total Executed Trades</span>
+            <div class='metric-value' style='color:#00d26a;'>{len(trades_df):,}</div>
+            <span style='font-size:11px;color:#94a3b8;'>Across {unique_stocks} Equities</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+
     fl1, fl2, fl3 = st.columns([1.5, 1.2, 1.2])
     with fl1:
-        sym_options = ["All Equities"] + sorted(trades_df['symbol'].unique().tolist())
+        sym_options = ["All Equities"] + sorted(trades_df_sorted['symbol'].unique().tolist())
         sel_sym = st.selectbox("Filter by Symbol:", sym_options, key="sec3_port_filt_sym")
     with fl2:
         sel_act = st.selectbox("Filter by Action:", ["All Actions", "BUY Only", "SELL Only"], key="sec3_port_filt_act")
     with fl3:
         sel_out = st.selectbox("Filter by Outcome:", ["All Outcomes", "Wins Only", "Losses Only"], key="sec3_port_filt_out")
         
-    filt_df = trades_df.copy()
+    filt_df = trades_df_sorted.copy()
     if sel_sym != "All Equities":
         filt_df = filt_df[filt_df['symbol'] == sel_sym]
     if sel_act == "BUY Only":
@@ -1927,7 +2022,11 @@ def render_portfolio_combined_view(
     elif sel_out == "Losses Only":
         filt_df = filt_df[filt_df['win'] == False]
         
-    disp_cols = ['symbol', 'signal_date', 'entry_date', 'exit_date', 'action', 'reason', 'entry_price', 'exit_price', 'exit_reason', 'holding_bars', 'holding_days', 'pnl_pct']
+    disp_cols = [
+        'symbol', 'signal_date', 'entry_date', 'exit_date', 'action', 'reason',
+        'entry_price', 'exit_price', 'exit_reason', 'holding_bars', 'holding_days',
+        'pnl_pct', 'drawdown_pct', 'dd_days'
+    ]
     
     disp_t = filt_df[disp_cols].copy()
     disp_t['signal_date'] = pd.to_datetime(disp_t['signal_date']).dt.strftime('%Y-%m-%d')
@@ -1945,7 +2044,9 @@ def render_portfolio_combined_view(
         'exit_reason': 'Exit Reason',
         'holding_bars': 'Holding Bars',
         'holding_days': 'Holding Days',
-        'pnl_pct': 'Return (%)'
+        'pnl_pct': 'Return (%)',
+        'drawdown_pct': 'Drawdown (%)',
+        'dd_days': 'DD Days'
     })
     
     trade_port_cfg = {
@@ -1953,11 +2054,12 @@ def render_portfolio_combined_view(
         'Exit Price': st.column_config.NumberColumn('Exit Price', format='₹%.2f'),
         'Holding Bars': st.column_config.NumberColumn('Holding Bars', format='%d'),
         'Holding Days': st.column_config.NumberColumn('Holding Days', format='%d'),
-        'Return (%)': st.column_config.NumberColumn('Return (%)', format='%+.2f%%')
+        'Return (%)': st.column_config.NumberColumn('Return (%)', format='%+.2f%%'),
+        'Drawdown (%)': st.column_config.NumberColumn('Drawdown (%)', format='%.2f%%'),
+        'DD Days': st.column_config.NumberColumn('DD Days', format='%d')
     }
     st.dataframe(disp_t, column_config=trade_port_cfg, width="stretch", hide_index=True)
 
-    
     csv_bytes = trades_df.to_csv(index=False).encode('utf-8')
     st.download_button(
         label=f"📥 Download Full Portfolio ({len(trades_df):,} Trades) Log CSV",
@@ -1965,13 +2067,6 @@ def render_portfolio_combined_view(
         file_name=f"portfolio_rsi_divergence_{timeframe.lower()}_trades.csv",
         mime="text/csv",
         key="btn_download_portfolio_trades_csv"
-    )
-
-    # 7. CAPITAL GROWTH & INDIAN REGULATORY CHARGES SIMULATION (PORTFOLIO COMBINED)
-    render_capital_charges_simulator(
-        trades_df=trades_df,
-        asset_label="All Stocks Combined Portfolio",
-        key_prefix="port_combined"
     )
 
 # =============================================================
@@ -2191,14 +2286,28 @@ def render_rsi_divergence_section(analytics_engine):
                 index=0
             )
         with f2:
+            min_lim = min(min_data_date, max_data_date)
+            max_lim = max(min_data_date, max_data_date)
             if date_filter_mode == "Custom Range":
-                start_f = st.date_input("Filter Start Date:", value=min_data_date)
-                end_f = st.date_input("Filter End Date:", value=max_data_date)
+                start_f = st.date_input(
+                    "Filter Start Date:",
+                    value=min_lim,
+                    min_value=min_lim,
+                    max_value=max_lim,
+                    key="sec3_custom_start_date"
+                )
+                end_f = st.date_input(
+                    "Filter End Date:",
+                    value=max_lim,
+                    min_value=min_lim,
+                    max_value=max_lim,
+                    key="sec3_custom_end_date"
+                )
             elif date_filter_mode.startswith("Last 10 Years"):
-                start_f = pd.to_datetime("2016-01-01").date()
+                start_f = max(min_lim, pd.to_datetime("2016-01-01").date())
                 end_f = max_data_date
             elif date_filter_mode.startswith("Post-Covid"):
-                start_f = pd.to_datetime("2020-01-01").date()
+                start_f = max(min_lim, pd.to_datetime("2020-01-01").date())
                 end_f = max_data_date
             else:
                 start_f = min_data_date
