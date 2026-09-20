@@ -653,6 +653,69 @@ def run_portfolio_combined_backtest(
                 neg_ret = abs(t_df[t_df['pnl_pct'] < 0]['pnl_pct'].sum())
                 pf = (pos_ret / neg_ret) if neg_ret > 0 else (99.9 if pos_ret > 0 else 0.0)
                 
+                # Calculate individual stock drawdown episodes and duration
+                t_df_sorted = t_df.sort_values('exit_date').reset_index(drop=True)
+                s_dt = pd.to_datetime(t_df_sorted['entry_date'].iloc[0])
+                s_hwm = 0.0
+                s_hwm_dt = s_dt
+                s_cum = 0.0
+                s_in_dd = False
+                s_curr_peak_val = 0.0
+                s_curr_peak_dt = s_dt
+                s_curr_trough_val = 0.0
+                s_curr_trough_dt = s_dt
+                s_episodes = []
+                
+                for _, r_t in t_df_sorted.iterrows():
+                    pnl_val = float(r_t['pnl_pct'])
+                    s_cum += pnl_val
+                    x_dt = pd.to_datetime(r_t['exit_date'])
+                    if s_cum >= s_hwm:
+                        if s_in_dd:
+                            s_episodes.append({
+                                'peak_dt': s_curr_peak_dt,
+                                'trough_dt': s_curr_trough_dt,
+                                'rec_dt': x_dt,
+                                'dd_pct': s_curr_trough_val - s_curr_peak_val,
+                                'rec_days': (x_dt - s_curr_peak_dt).days,
+                                'pt_days': (s_curr_trough_dt - s_curr_peak_dt).days,
+                                'recovered': True
+                            })
+                            s_in_dd = False
+                        s_hwm = s_cum
+                        s_hwm_dt = x_dt
+                    else:
+                        if not s_in_dd:
+                            s_in_dd = True
+                            s_curr_peak_val = s_hwm
+                            s_curr_peak_dt = s_hwm_dt
+                            s_curr_trough_val = s_cum
+                            s_curr_trough_dt = x_dt
+                        else:
+                            if s_cum < s_curr_trough_val:
+                                s_curr_trough_val = s_cum
+                                s_curr_trough_dt = x_dt
+                                
+                if s_in_dd:
+                    s_last_dt = pd.to_datetime(t_df_sorted['exit_date'].iloc[-1])
+                    s_episodes.append({
+                        'peak_dt': s_curr_peak_dt,
+                        'trough_dt': s_curr_trough_dt,
+                        'rec_dt': None,
+                        'dd_pct': s_curr_trough_val - s_curr_peak_val,
+                        'rec_days': (s_last_dt - s_curr_peak_dt).days,
+                        'pt_days': (s_curr_trough_dt - s_curr_peak_dt).days,
+                        'recovered': False
+                    })
+                    
+                if s_episodes:
+                    s_worst_ep = min(s_episodes, key=lambda x: x['dd_pct'])
+                    s_max_dd_pct = float(s_worst_ep['dd_pct'])
+                    s_max_dd_days = int(s_worst_ep['rec_days'])
+                else:
+                    s_max_dd_pct = 0.0
+                    s_max_dd_days = 0
+                
                 stock_stats_list.append({
                     'Symbol': sym,
                     'Trades': n_t,
@@ -664,6 +727,8 @@ def run_portfolio_combined_backtest(
                     'Total Return (%)': t_df['pnl_pct'].sum(),
                     'Best Trade (%)': t_df['pnl_pct'].max(),
                     'Worst Trade (%)': t_df['pnl_pct'].min(),
+                    'Max DD (%)': s_max_dd_pct,
+                    'Max DD Holding (Days)': s_max_dd_days,
                     'Avg Holding (Days)': t_df['holding_days'].mean(),
                     'Min Holding (Days)': int(t_df['holding_days'].min()),
                     'Max Holding (Days)': int(t_df['holding_days'].max()),
@@ -1937,12 +2002,23 @@ def render_portfolio_combined_view(
             'Total Return (%)': st.column_config.NumberColumn('Total Return (%)', format='%+.1f%%'),
             'Best Trade (%)': st.column_config.NumberColumn('Best Trade (%)', format='%+.1f%%'),
             'Worst Trade (%)': st.column_config.NumberColumn('Worst Trade (%)', format='%+.1f%%'),
+            'Max DD (%)': st.column_config.NumberColumn('Max DD (%)', format='%.2f%%', help='Maximum peak-to-trough equity drawdown percentage'),
+            'Max DD Holding (Days)': st.column_config.NumberColumn('Max DD Holding (Days)', format='%d', help='Duration in calendar days of the maximum drawdown episode (Peak to Recovery/Ongoing)'),
             'Avg Holding (Days)': st.column_config.NumberColumn('Avg Holding (Days)', format='%.1f'),
             'Min Holding (Days)': st.column_config.NumberColumn('Min Holding (Days)', format='%d'),
             'Max Holding (Days)': st.column_config.NumberColumn('Max Holding (Days)', format='%d'),
             'Avg Holding (Bars)': st.column_config.NumberColumn('Avg Holding (Bars)', format='%.1f')
         }
         st.dataframe(disp_stocks, column_config=stock_cfg, width="stretch", hide_index=True)
+        
+        csv_stocks = disp_stocks.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Stock Performance Matrix CSV",
+            data=csv_stocks,
+            file_name=f"stock_performance_matrix_{timeframe.lower()}.csv",
+            mime="text/csv",
+            key="btn_download_stock_matrix_csv"
+        )
 
         
     # =============================================================
