@@ -1267,20 +1267,23 @@ def render_capital_charges_simulator(
             rec_val = "0 Days"
             rec_sub = "No Drawdowns"
             rec_col = "#00d26a"
+            dd_tooltip = "No Drawdowns Detected"
         elif summary['max_dd_recovered']:
             rec_val = f"{summary['max_dd_peak_to_rec_days']:,} Days"
-            rec_sub = f"Trough to Rec: {summary['max_dd_recovery_days']:,}d"
+            rec_sub = f"{summary['max_dd_peak_date']} ➔ {summary['max_dd_rec_date']}"
             rec_col = "#38bdf8"
+            dd_tooltip = f"Peak: {summary['max_dd_peak_date']} | Bottom (Trough): {summary['max_dd_trough_date']} | Recovery: {summary['max_dd_rec_date']}"
         else:
             rec_val = f"{summary['max_dd_peak_to_rec_days']:,}d (Ongoing)"
-            rec_sub = f"Trough: {summary['max_dd_trough_date']}"
+            rec_sub = f"{summary['max_dd_peak_date']} ➔ Ongoing"
             rec_col = "#fbbf24"
+            dd_tooltip = f"Peak: {summary['max_dd_peak_date']} | Bottom (Trough): {summary['max_dd_trough_date']} | Status: Ongoing / Unrecovered"
             
         st.markdown(f"""
         <div class='metric-card'>
             <span class='metric-label'>Days to Recover DD</span>
             <div class='metric-value' style='color:{rec_col};'>{rec_val}</div>
-            <span style='font-size:11px;color:#94a3b8;'>{rec_sub}</span>
+            <span style='font-size:11px;color:#94a3b8;' title='{dd_tooltip}'>{rec_sub}</span>
         </div>
         """, unsafe_allow_html=True)
         
