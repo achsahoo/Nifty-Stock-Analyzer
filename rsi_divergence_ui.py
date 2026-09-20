@@ -2546,12 +2546,12 @@ def render_rsi_divergence_section(analytics_engine):
     with m5:
         if max_dd_period_str and max_dd_period_str != "No Drawdown":
             rec_status = f"Recovery: {max_dd_rec_date} ({max_dd_days} Days)" if max_dd_recovered else f"Status: Ongoing / Unrecovered ({max_dd_days} Days)"
-            dd_tooltip = f"Peak: {max_dd_peak_date} | Bottom (Trough): {max_dd_trough_date} ({max_dd_pt_days}d) | {rec_status}"
-            dd_sub = f"Peak-to-Trough Points<br><span style='color:#fca5a5;font-weight:500;'>({max_dd_period_str})</span>"
+            dd_tooltip = f"Peak: {max_dd_peak_date} | Bottom (Trough): {max_dd_trough_date} ({max_dd_pt_days} days) | {rec_status}"
+            dd_sub = f"<span style='color:#94a3b8;'>{max_dd_pt_days} days </span><span style='color:#fca5a5;'>({max_dd_period_str})</span>"
         else:
             dd_tooltip = "No Drawdowns Detected"
-            dd_sub = "Peak-to-Trough Points"
-        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Max Drawdown</span><div class='metric-value-neg'>{max_dd:,.1f}</div><span style='font-size:11px;color:#94a3b8;line-height:1.3;' title='{dd_tooltip}'>{dd_sub}</span></div>""", unsafe_allow_html=True)
+            dd_sub = "<span style='color:#94a3b8;'>0 days (No Drawdown)</span>"
+        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Max Drawdown</span><div class='metric-value-neg'>{max_dd:,.1f}</div><span style='font-size:10.5px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;' title='{dd_tooltip}'>{dd_sub}</span></div>""", unsafe_allow_html=True)
     with m6:
         avg_col = "#00d26a" if avg_trade_pct >= 0 else "#f8312f"
         st.markdown(f"""<div class='metric-card'><span class='metric-label'>Avg Trade %</span><div class='metric-value' style='color:{avg_col};'>{avg_trade_pct:+.2f}%</div><span style='font-size:11px;color:#94a3b8;'>Per Executed Trade</span></div>""", unsafe_allow_html=True)
