@@ -267,7 +267,91 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else np.nan
     
     cum_pts = trades_df['pnl_pts'].cumsum()
-    max_dd_pts = (cum_pts - cum_pts.cummax()).min()
+    
+    # Calculate drawdown episodes and peak-to-trough dates
+    start_dt = pd.to_datetime(trades_df['entry_date'].iloc[0]) if 'entry_date' in trades_df.columns else pd.Timestamp.now()
+    hwm = 0.0
+    hwm_dt = start_dt
+    cum = 0.0
+    in_dd = False
+    curr_peak_pts = 0.0
+    curr_peak_dt = start_dt
+    curr_trough_pts = 0.0
+    curr_trough_dt = start_dt
+    
+    dd_episodes = []
+    
+    for _, row in trades_df.iterrows():
+        pnl = row['pnl_pts']
+        cum += pnl
+        exit_dt = pd.to_datetime(row['exit_date']) if 'exit_date' in row and pd.notna(row['exit_date']) else (
+            pd.to_datetime(row['entry_date']) if 'entry_date' in row and pd.notna(row['entry_date']) else start_dt
+        )
+        
+        if cum >= hwm:
+            if in_dd:
+                dd_episodes.append({
+                    'peak_dt': curr_peak_dt,
+                    'trough_dt': curr_trough_dt,
+                    'rec_dt': exit_dt,
+                    'peak_pts': curr_peak_pts,
+                    'trough_pts': curr_trough_pts,
+                    'dd_pts': curr_peak_pts - curr_trough_pts,
+                    'recovered': True,
+                    'days': (exit_dt - curr_peak_dt).days,
+                    'peak_to_trough_days': (curr_trough_dt - curr_peak_dt).days
+                })
+                in_dd = False
+            hwm = cum
+            hwm_dt = exit_dt
+        else:
+            if not in_dd:
+                in_dd = True
+                curr_peak_pts = hwm
+                curr_peak_dt = hwm_dt
+                curr_trough_pts = cum
+                curr_trough_dt = exit_dt
+            else:
+                if cum < curr_trough_pts:
+                    curr_trough_pts = cum
+                    curr_trough_dt = exit_dt
+                    
+    if in_dd:
+        last_exit_dt = pd.to_datetime(trades_df['exit_date'].iloc[-1]) if 'exit_date' in trades_df.columns else curr_trough_dt
+        dd_episodes.append({
+            'peak_dt': curr_peak_dt,
+            'trough_dt': curr_trough_dt,
+            'rec_dt': None,
+            'peak_pts': curr_peak_pts,
+            'trough_pts': curr_trough_pts,
+            'dd_pts': curr_peak_pts - curr_trough_pts,
+            'recovered': False,
+            'days': (last_exit_dt - curr_peak_dt).days,
+            'peak_to_trough_days': (curr_trough_dt - curr_peak_dt).days
+        })
+        
+    if dd_episodes:
+        max_ep = max(dd_episodes, key=lambda x: x['dd_pts'])
+        p_str = max_ep['peak_dt'].strftime('%Y-%m-%d')
+        t_str = max_ep['trough_dt'].strftime('%Y-%m-%d')
+        r_str = max_ep['rec_dt'].strftime('%Y-%m-%d') if max_ep['rec_dt'] is not None else 'Ongoing'
+        max_dd_pts = -float(max_ep['dd_pts'])
+        max_dd_peak_date = p_str
+        max_dd_trough_date = t_str
+        max_dd_rec_date = r_str
+        max_dd_recovered = max_ep['recovered']
+        max_dd_days = int(max_ep['days'])
+        max_dd_pt_days = int(max_ep['peak_to_trough_days'])
+        max_dd_period_str = f"{p_str} ➔ {t_str}"
+    else:
+        max_dd_pts = 0.0
+        max_dd_peak_date = '-'
+        max_dd_trough_date = '-'
+        max_dd_rec_date = '-'
+        max_dd_recovered = True
+        max_dd_days = 0
+        max_dd_pt_days = 0
+        max_dd_period_str = 'No Drawdown'
     
     avg_win_pts = wins['pnl_pts'].mean() if not wins.empty else 0.0
     avg_loss_pts = losses['pnl_pts'].mean() if not losses.empty else 0.0
@@ -283,6 +367,13 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
         'total_pnl_pts': total_pnl_pts,
         'profit_factor': profit_factor,
         'max_dd_pts': max_dd_pts,
+        'max_dd_peak_date': max_dd_peak_date,
+        'max_dd_trough_date': max_dd_trough_date,
+        'max_dd_rec_date': max_dd_rec_date,
+        'max_dd_recovered': max_dd_recovered,
+        'max_dd_days': max_dd_days,
+        'max_dd_pt_days': max_dd_pt_days,
+        'max_dd_period_str': max_dd_period_str,
         'avg_trade_pct': trades_df['pnl_pct'].mean(),
         'avg_win_pts': avg_win_pts,
         'avg_loss_pts': avg_loss_pts,
@@ -2426,6 +2517,13 @@ def render_rsi_divergence_section(analytics_engine):
     total_pnl = stats['total_pnl_pts']
     pf = stats['profit_factor']
     max_dd = stats['max_dd_pts']
+    max_dd_period_str = stats.get('max_dd_period_str', '')
+    max_dd_peak_date = stats.get('max_dd_peak_date', '-')
+    max_dd_trough_date = stats.get('max_dd_trough_date', '-')
+    max_dd_rec_date = stats.get('max_dd_rec_date', '-')
+    max_dd_recovered = stats.get('max_dd_recovered', True)
+    max_dd_days = stats.get('max_dd_days', 0)
+    max_dd_pt_days = stats.get('max_dd_pt_days', 0)
     avg_trade_pct = stats['avg_trade_pct']
     avg_h_days = stats.get('avg_holding_days', 0.0)
     min_h_days = stats.get('min_holding_days', 0)
@@ -2446,7 +2544,14 @@ def render_rsi_divergence_section(analytics_engine):
         pf_color = "#00d26a" if pf >= 1.5 else ("#38bdf8" if pf >= 1.0 else "#f8312f")
         st.markdown(f"""<div class='metric-card'><span class='metric-label'>Profit Factor</span><div class='metric-value' style='color:{pf_color};'>{pf_str}</div><span style='font-size:11px;color:#94a3b8;'>Gross Win / Loss</span></div>""", unsafe_allow_html=True)
     with m5:
-        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Max Drawdown</span><div class='metric-value-neg'>{max_dd:,.1f}</div><span style='font-size:11px;color:#94a3b8;'>Peak-to-Trough Points</span></div>""", unsafe_allow_html=True)
+        if max_dd_period_str and max_dd_period_str != "No Drawdown":
+            rec_status = f"Recovery: {max_dd_rec_date} ({max_dd_days} Days)" if max_dd_recovered else f"Status: Ongoing / Unrecovered ({max_dd_days} Days)"
+            dd_tooltip = f"Peak: {max_dd_peak_date} | Bottom (Trough): {max_dd_trough_date} ({max_dd_pt_days}d) | {rec_status}"
+            dd_sub = f"Peak-to-Trough Points<br><span style='color:#fca5a5;font-weight:500;'>({max_dd_period_str})</span>"
+        else:
+            dd_tooltip = "No Drawdowns Detected"
+            dd_sub = "Peak-to-Trough Points"
+        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Max Drawdown</span><div class='metric-value-neg'>{max_dd:,.1f}</div><span style='font-size:11px;color:#94a3b8;line-height:1.3;' title='{dd_tooltip}'>{dd_sub}</span></div>""", unsafe_allow_html=True)
     with m6:
         avg_col = "#00d26a" if avg_trade_pct >= 0 else "#f8312f"
         st.markdown(f"""<div class='metric-card'><span class='metric-label'>Avg Trade %</span><div class='metric-value' style='color:{avg_col};'>{avg_trade_pct:+.2f}%</div><span style='font-size:11px;color:#94a3b8;'>Per Executed Trade</span></div>""", unsafe_allow_html=True)
