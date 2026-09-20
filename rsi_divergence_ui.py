@@ -1088,39 +1088,62 @@ def render_capital_charges_simulator(
         - **GST**: 18.0% on (Brokerage + Exchange Fees + SEBI Fees)
         """)
         preset_key = f"{key_prefix}_tax_preset"
+        
+        def _apply_charges_preset(k_prefix):
+            chosen = st.session_state.get(f"{k_prefix}_tax_preset", "📋 Standard Equity Delivery")
+            if chosen.startswith("📋 Standard Equity Delivery"):
+                st.session_state[f"{k_prefix}_stt_b"] = 0.100
+                st.session_state[f"{k_prefix}_stt_s"] = 0.100
+                st.session_state[f"{k_prefix}_stamp"] = 0.015
+                st.session_state[f"{k_prefix}_nse"] = 0.00297
+                st.session_state[f"{k_prefix}_sebi"] = 0.00010
+                st.session_state[f"{k_prefix}_ipft"] = 0.00010
+                st.session_state[f"{k_prefix}_brok"] = 0.0
+                st.session_state[f"{k_prefix}_gst"] = 18.0
+            elif chosen.startswith("⚡ Equity Intraday"):
+                st.session_state[f"{k_prefix}_stt_b"] = 0.000
+                st.session_state[f"{k_prefix}_stt_s"] = 0.025
+                st.session_state[f"{k_prefix}_stamp"] = 0.003
+                st.session_state[f"{k_prefix}_nse"] = 0.00297
+                st.session_state[f"{k_prefix}_sebi"] = 0.00010
+                st.session_state[f"{k_prefix}_ipft"] = 0.00010
+                st.session_state[f"{k_prefix}_brok"] = 20.0
+                st.session_state[f"{k_prefix}_gst"] = 18.0
+            else:
+                st.session_state[f"{k_prefix}_stt_b"] = 0.0
+                st.session_state[f"{k_prefix}_stt_s"] = 0.0
+                st.session_state[f"{k_prefix}_stamp"] = 0.0
+                st.session_state[f"{k_prefix}_nse"] = 0.0
+                st.session_state[f"{k_prefix}_sebi"] = 0.0
+                st.session_state[f"{k_prefix}_ipft"] = 0.0
+                st.session_state[f"{k_prefix}_brok"] = 0.0
+                st.session_state[f"{k_prefix}_gst"] = 0.0
+
+        if f"{key_prefix}_stt_b" not in st.session_state:
+            _apply_charges_preset(key_prefix)
+
         curr_preset = st.radio(
             "Charges Preset:",
             ["📋 Standard Equity Delivery (Statutory Schedule)", "⚡ Equity Intraday", "🛠️ Custom / Zero Charges"],
             horizontal=True,
-            key=preset_key
+            key=preset_key,
+            on_change=_apply_charges_preset,
+            args=(key_prefix,)
         )
-        
-        if curr_preset.startswith("📋 Standard Equity Delivery"):
-            def_stt_b, def_stt_s, def_stamp, def_nse, def_sebi, def_ipft, def_brok, def_gst = (
-                0.100, 0.100, 0.015, 0.00297, 0.00010, 0.00010, 0.0, 18.0
-            )
-        elif curr_preset.startswith("⚡ Equity Intraday"):
-            def_stt_b, def_stt_s, def_stamp, def_nse, def_sebi, def_ipft, def_brok, def_gst = (
-                0.000, 0.025, 0.003, 0.00297, 0.00010, 0.00010, 20.0, 18.0
-            )
-        else:
-            def_stt_b, def_stt_s, def_stamp, def_nse, def_sebi, def_ipft, def_brok, def_gst = (
-                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-            )
             
         tc1, tc2, tc3, tc4 = st.columns(4)
         with tc1:
-            stt_b = st.number_input("STT Buy (%):", min_value=0.0, max_value=2.0, value=def_stt_b, step=0.01, format="%.3f", key=f"{key_prefix}_stt_b")
-            stt_s = st.number_input("STT Sell (%):", min_value=0.0, max_value=2.0, value=def_stt_s, step=0.01, format="%.3f", key=f"{key_prefix}_stt_s")
+            stt_b = st.number_input("STT Buy (%):", min_value=0.0, max_value=2.0, step=0.01, format="%.3f", key=f"{key_prefix}_stt_b")
+            stt_s = st.number_input("STT Sell (%):", min_value=0.0, max_value=2.0, step=0.01, format="%.3f", key=f"{key_prefix}_stt_s")
         with tc2:
-            stamp = st.number_input("Stamp Duty Buy (%):", min_value=0.0, max_value=1.0, value=def_stamp, step=0.005, format="%.3f", key=f"{key_prefix}_stamp")
-            nse_fee = st.number_input("NSE Exchange Fee (%):", min_value=0.0, max_value=1.0, value=def_nse, step=0.0001, format="%.5f", key=f"{key_prefix}_nse")
+            stamp = st.number_input("Stamp Duty Buy (%):", min_value=0.0, max_value=1.0, step=0.005, format="%.3f", key=f"{key_prefix}_stamp")
+            nse_fee = st.number_input("NSE Exchange Fee (%):", min_value=0.0, max_value=1.0, step=0.0001, format="%.5f", key=f"{key_prefix}_nse")
         with tc3:
-            sebi_fee = st.number_input("SEBI Turnover Fee (%):", min_value=0.0, max_value=0.1, value=def_sebi, step=0.00005, format="%.5f", key=f"{key_prefix}_sebi")
-            ipft_fee = st.number_input("IPFT Fee (%):", min_value=0.0, max_value=0.1, value=def_ipft, step=0.00005, format="%.5f", key=f"{key_prefix}_ipft")
+            sebi_fee = st.number_input("SEBI Turnover Fee (%):", min_value=0.0, max_value=0.1, step=0.00005, format="%.5f", key=f"{key_prefix}_sebi")
+            ipft_fee = st.number_input("IPFT Fee (%):", min_value=0.0, max_value=0.1, step=0.00005, format="%.5f", key=f"{key_prefix}_ipft")
         with tc4:
-            brok_val = st.number_input("Flat Brokerage / Order (₹):", min_value=0.0, max_value=500.0, value=def_brok, step=5.0, format="%.1f", key=f"{key_prefix}_brok")
-            gst_val = st.number_input("GST Rate (%):", min_value=0.0, max_value=30.0, value=def_gst, step=1.0, format="%.1f", key=f"{key_prefix}_gst")
+            brok_val = st.number_input("Flat Brokerage / Order (₹):", min_value=0.0, max_value=500.0, step=5.0, format="%.1f", key=f"{key_prefix}_brok")
+            gst_val = st.number_input("GST Rate (%):", min_value=0.0, max_value=30.0, step=1.0, format="%.1f", key=f"{key_prefix}_gst")
             
         est_statutory_rt = stt_b + stt_s + stamp + (nse_fee * 2) + (sebi_fee * 2) + (ipft_fee * 2)
         st.markdown(f"<span style='font-size:12px; color:#38bdf8;'>Total Round-Trip Statutory Rate: <strong>{est_statutory_rt:.5f}%</strong> of trade turnover (+ Flat Brokerage ₹{brok_val:.1f} & GST {gst_val:.1f}%)</span>", unsafe_allow_html=True)
