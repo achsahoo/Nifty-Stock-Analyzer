@@ -653,6 +653,588 @@ def run_portfolio_combined_backtest(
     return df_trades, df_skips, df_stocks, port_stats
 
 
+# =============================================================
+# CAPITAL GROWTH & INDIAN REGULATORY CHARGES SIMULATION ENGINE
+# =============================================================
+
+def simulate_capital_and_charges(
+    trades_df: pd.DataFrame,
+    initial_capital: float = 100000.0,
+    allocation_pct: float = 70.0,
+    compounding: bool = True,
+    stt_buy_pct: float = 0.100,
+    stt_sell_pct: float = 0.100,
+    stamp_duty_pct: float = 0.015,
+    exchange_pct: float = 0.00297,
+    sebi_pct: float = 0.00010,
+    ipft_pct: float = 0.00010,
+    brokerage_flat: float = 0.0,
+    brokerage_pct: float = 0.0,
+    gst_pct: float = 18.0
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Simulates real-world capital growth and net monetary PnL on an initial investment (default ₹1,00,000)
+    with custom per-trade capital allocation (default 70%) and Indian regulatory charges (STT, Stamp Duty,
+    NSE Exchange, SEBI, IPFT, Brokerage, and GST).
+    """
+    if trades_df.empty:
+        return pd.DataFrame(), {}
+        
+    trades = trades_df.sort_values(by=['entry_date', 'exit_date']).copy().reset_index(drop=True)
+    
+    current_balance = float(initial_capital)
+    gross_balance = float(initial_capital)
+    
+    sim_rows = []
+    
+    total_stt = 0.0
+    total_stamp_duty = 0.0
+    total_exchange = 0.0
+    total_sebi_ipft = 0.0
+    total_brokerage_gst = 0.0
+    total_charges = 0.0
+    total_gross_pnl = 0.0
+    
+    peak_balance = float(initial_capital)
+    max_dd_inr = 0.0
+    max_dd_pct = 0.0
+    
+    for idx, row in trades.iterrows():
+        entry_price = float(row.get('entry_price', 0.0))
+        exit_price = float(row.get('exit_price', 0.0))
+        action = str(row.get('action', 'BUY')).upper()
+        
+        if entry_price <= 0 or exit_price <= 0:
+            continue
+            
+        # Determine capital to deploy
+        if compounding:
+            allocated_capital = current_balance * (allocation_pct / 100.0)
+        else:
+            allocated_capital = initial_capital * (allocation_pct / 100.0)
+            
+        # Constrain to available current balance
+        allocated_capital = min(allocated_capital, max(0.0, current_balance))
+        
+        # Calculate share quantity
+        if current_balance >= entry_price and allocated_capital >= entry_price:
+            qty = max(1, int(allocated_capital // entry_price))
+            if qty * entry_price > current_balance:
+                qty = max(1, int(current_balance // entry_price))
+        elif current_balance >= entry_price:
+            qty = 1
+        else:
+            qty = 0
+            
+        if qty == 0:
+            continue
+            
+        buy_turnover = qty * entry_price
+        sell_turnover = qty * exit_price
+        
+        # Buy-side charges
+        stt_buy = buy_turnover * (stt_buy_pct / 100.0)
+        stamp_duty = buy_turnover * (stamp_duty_pct / 100.0)
+        exchange_buy = buy_turnover * (exchange_pct / 100.0)
+        sebi_buy = buy_turnover * (sebi_pct / 100.0)
+        ipft_buy = buy_turnover * (ipft_pct / 100.0)
+        brokerage_buy = brokerage_flat + (buy_turnover * (brokerage_pct / 100.0))
+        gst_buy = (exchange_buy + sebi_buy + brokerage_buy) * (gst_pct / 100.0)
+        buy_charges = stt_buy + stamp_duty + exchange_buy + sebi_buy + ipft_buy + brokerage_buy + gst_buy
+        
+        # Sell-side charges
+        stt_sell = sell_turnover * (stt_sell_pct / 100.0)
+        exchange_sell = sell_turnover * (exchange_pct / 100.0)
+        sebi_sell = sell_turnover * (sebi_pct / 100.0)
+        ipft_sell = sell_turnover * (ipft_pct / 100.0)
+        brokerage_sell = brokerage_flat + (sell_turnover * (brokerage_pct / 100.0))
+        gst_sell = (exchange_sell + sebi_sell + brokerage_sell) * (gst_pct / 100.0)
+        sell_charges = stt_sell + exchange_sell + sebi_sell + ipft_sell + brokerage_sell + gst_sell
+        
+        # Aggregated charges for this trade
+        trade_stt = stt_buy + stt_sell
+        trade_stamp_duty = stamp_duty
+        trade_exchange = exchange_buy + exchange_sell
+        trade_sebi_ipft = sebi_buy + sebi_sell + ipft_buy + ipft_sell
+        trade_brokerage_gst = brokerage_buy + brokerage_sell + gst_buy + gst_sell
+        trade_charges = buy_charges + sell_charges
+        
+        # Gross and Net PnL
+        if action == 'BUY':
+            gross_pnl = (exit_price - entry_price) * qty
+        else:
+            gross_pnl = (entry_price - exit_price) * qty
+            
+        net_pnl = gross_pnl - trade_charges
+        net_trade_ret_pct = (net_pnl / buy_turnover) * 100.0 if buy_turnover > 0 else 0.0
+        
+        current_balance += net_pnl
+        gross_balance += gross_pnl
+        
+        # Track peak and drawdowns
+        if current_balance > peak_balance:
+            peak_balance = current_balance
+        dd_inr = peak_balance - current_balance
+        dd_pct = (dd_inr / peak_balance * 100.0) if peak_balance > 0 else 0.0
+        if dd_inr > max_dd_inr:
+            max_dd_inr = dd_inr
+        if dd_pct > max_dd_pct:
+            max_dd_pct = dd_pct
+            
+        total_stt += trade_stt
+        total_stamp_duty += trade_stamp_duty
+        total_exchange += trade_exchange
+        total_sebi_ipft += trade_sebi_ipft
+        total_brokerage_gst += trade_brokerage_gst
+        total_charges += trade_charges
+        total_gross_pnl += gross_pnl
+        
+        trade_dict = dict(row)
+        trade_dict.update({
+            'deployed_capital': buy_turnover,
+            'qty': qty,
+            'gross_pnl_inr': gross_pnl,
+            'stt_inr': trade_stt,
+            'stamp_duty_inr': trade_stamp_duty,
+            'exchange_fee_inr': trade_exchange,
+            'sebi_ipft_inr': trade_sebi_ipft,
+            'brokerage_gst_inr': trade_brokerage_gst,
+            'total_charges_inr': trade_charges,
+            'net_pnl_inr': net_pnl,
+            'net_roi_pct': net_trade_ret_pct,
+            'ending_balance': current_balance,
+            'gross_balance': gross_balance,
+            'drawdown_inr': dd_inr,
+            'drawdown_pct': dd_pct
+        })
+        sim_rows.append(trade_dict)
+        
+    sim_df = pd.DataFrame(sim_rows)
+    if sim_df.empty:
+        return pd.DataFrame(), {}
+        
+    net_profit_inr = current_balance - initial_capital
+    net_roi_pct = (net_profit_inr / initial_capital) * 100.0 if initial_capital > 0 else 0.0
+    profit_retention = (net_profit_inr / total_gross_pnl * 100.0) if total_gross_pnl > 0 else 0.0
+    charges_drag = (total_charges / total_gross_pnl * 100.0) if total_gross_pnl > 0 else 0.0
+    
+    summary = {
+        'initial_capital': initial_capital,
+        'final_capital': current_balance,
+        'gross_final_capital': gross_balance,
+        'net_profit_inr': net_profit_inr,
+        'net_roi_pct': net_roi_pct,
+        'gross_profit_inr': total_gross_pnl,
+        'total_charges_inr': total_charges,
+        'stt_total': total_stt,
+        'stamp_duty_total': total_stamp_duty,
+        'exchange_total': total_exchange,
+        'sebi_ipft_total': total_sebi_ipft,
+        'brokerage_gst_total': total_brokerage_gst,
+        'profit_retention_pct': profit_retention,
+        'charges_drag_pct': charges_drag,
+        'peak_balance': peak_balance,
+        'max_dd_inr': max_dd_inr,
+        'max_dd_pct': max_dd_pct,
+        'total_executed_trades': len(sim_df)
+    }
+    return sim_df, summary
+
+
+def compute_annual_capital_breakdown(sim_df: pd.DataFrame, initial_capital: float) -> pd.DataFrame:
+    """
+    Computes annual financial ledger showing year-by-year starting balance, gross return,
+    taxes & charges deducted, net profit, ending balance, and annual net ROI %.
+    """
+    if sim_df.empty:
+        return pd.DataFrame()
+        
+    df = sim_df.copy()
+    df['year'] = pd.to_datetime(df['entry_date']).dt.year
+    df = df.sort_values(by=['entry_date', 'exit_date']).reset_index(drop=True)
+    
+    annual_records = []
+    years = sorted(df['year'].unique())
+    curr_start_cap = initial_capital
+    
+    for yr in years:
+        yr_df = df[df['year'] == yr]
+        n_trades = len(yr_df)
+        yr_gross_pnl = yr_df['gross_pnl_inr'].sum()
+        yr_charges = yr_df['total_charges_inr'].sum()
+        yr_net_pnl = yr_df['net_pnl_inr'].sum()
+        ending_cap = yr_df['ending_balance'].iloc[-1]
+        annual_roi = (yr_net_pnl / curr_start_cap * 100.0) if curr_start_cap > 0 else 0.0
+        
+        annual_records.append({
+            'Year': int(yr),
+            'Starting Capital': curr_start_cap,
+            'Trades': n_trades,
+            'Gross Return (₹)': yr_gross_pnl,
+            'Taxes & Charges (₹)': yr_charges,
+            'Net Return (₹)': yr_net_pnl,
+            'Ending Capital': ending_cap,
+            'Net ROI (%)': annual_roi
+        })
+        curr_start_cap = ending_cap
+        
+    return pd.DataFrame(annual_records)
+
+
+def render_capital_charges_simulator(
+    trades_df: pd.DataFrame,
+    asset_label: str,
+    key_prefix: str = "cap_sim"
+):
+    """
+    Renders an institutional, interactive Capital & Indian Regulatory Charges Simulation dashboard
+    showing actual net monetary returns after all statutory taxes & broker fees.
+    """
+    if trades_df.empty:
+        return
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(f"### 💰 Net Capital Growth & Indian Regulatory Charges Simulator ({asset_label})")
+    st.markdown("""
+    Interactive monetary investment simulation calculating actual **net portfolio balance** after deducting
+    all statutory Indian market taxes & regulatory fees (**STT, Stamp Duty, NSE Exchange, SEBI, IPFT, Brokerage, and GST**).
+    Adjust starting capital, allocation percentage per trade, and statutory fee schedules in real time.
+    """)
+    
+    # 1. User Interactive Controls
+    c1, c2, c3 = st.columns([1.5, 1.8, 1.7])
+    with c1:
+        init_cap = st.number_input(
+            "💵 Starting Capital (₹):",
+            min_value=10000.0,
+            max_value=100000000.0,
+            value=100000.0,
+            step=10000.0,
+            format="%.0f",
+            key=f"{key_prefix}_init_cap",
+            help="Initial starting portfolio investment amount in INR. Default: ₹1,00,000."
+        )
+    with c2:
+        alloc_pct = st.slider(
+            "🎯 Trade Capital Allocation (%):",
+            min_value=10,
+            max_value=100,
+            value=70,
+            step=5,
+            key=f"{key_prefix}_alloc_pct",
+            help="Percentage of total portfolio balance deployed into each executed divergence trade. Default: 70%."
+        )
+    with c3:
+        comp_mode = st.selectbox(
+            "🔄 Allocation Sizing Method:",
+            ["Dynamic Compounding (Reinvest Profits)", "Static Allocation (Fixed % of Initial)"],
+            index=0,
+            key=f"{key_prefix}_comp_mode",
+            help="Dynamic Compounding deploys 70% of current equity (reinvesting gains). Static deploys 70% of initial ₹1,00,000."
+        )
+        is_compounding = "Compounding" in comp_mode
+
+    # 2. Expandable Regulatory Charges & Brokerage Schedule
+    with st.expander("⚙️ View & Customize Indian Regulatory Charges & Brokerage Schedule", expanded=False):
+        st.markdown("""
+        Regulatory schedules per SEBI, NSE, and Ministry of Finance mandates:
+        - **STT**: 0.1% on Buy & Sell (Equity Delivery) / 0.025% on Sell (Intraday)
+        - **Stamp Duty**: 0.015% on Buy (Delivery) / 0.003% on Buy (Intraday)
+        - **Exchange Turnover Fee (NSE)**: 0.00297% on Buy & Sell
+        - **SEBI Turnover Fee**: 0.0001% (₹10 / crore) on Buy & Sell
+        - **IPFT Fee**: 0.0001% on Buy & Sell
+        - **Brokerage**: Default ₹0 (free delivery) or customizable
+        - **GST**: 18.0% on (Brokerage + Exchange Fees + SEBI Fees)
+        """)
+        preset_key = f"{key_prefix}_tax_preset"
+        curr_preset = st.radio(
+            "Charges Preset:",
+            ["📋 Standard Equity Delivery (Statutory Schedule)", "⚡ Equity Intraday", "🛠️ Custom / Zero Charges"],
+            horizontal=True,
+            key=preset_key
+        )
+        
+        if curr_preset.startswith("📋 Standard Equity Delivery"):
+            def_stt_b, def_stt_s, def_stamp, def_nse, def_sebi, def_ipft, def_brok, def_gst = (
+                0.100, 0.100, 0.015, 0.00297, 0.00010, 0.00010, 0.0, 18.0
+            )
+        elif curr_preset.startswith("⚡ Equity Intraday"):
+            def_stt_b, def_stt_s, def_stamp, def_nse, def_sebi, def_ipft, def_brok, def_gst = (
+                0.000, 0.025, 0.003, 0.00297, 0.00010, 0.00010, 20.0, 18.0
+            )
+        else:
+            def_stt_b, def_stt_s, def_stamp, def_nse, def_sebi, def_ipft, def_brok, def_gst = (
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            )
+            
+        tc1, tc2, tc3, tc4 = st.columns(4)
+        with tc1:
+            stt_b = st.number_input("STT Buy (%):", min_value=0.0, max_value=2.0, value=def_stt_b, step=0.01, format="%.3f", key=f"{key_prefix}_stt_b")
+            stt_s = st.number_input("STT Sell (%):", min_value=0.0, max_value=2.0, value=def_stt_s, step=0.01, format="%.3f", key=f"{key_prefix}_stt_s")
+        with tc2:
+            stamp = st.number_input("Stamp Duty Buy (%):", min_value=0.0, max_value=1.0, value=def_stamp, step=0.005, format="%.3f", key=f"{key_prefix}_stamp")
+            nse_fee = st.number_input("NSE Exchange Fee (%):", min_value=0.0, max_value=1.0, value=def_nse, step=0.0001, format="%.5f", key=f"{key_prefix}_nse")
+        with tc3:
+            sebi_fee = st.number_input("SEBI Turnover Fee (%):", min_value=0.0, max_value=0.1, value=def_sebi, step=0.00005, format="%.5f", key=f"{key_prefix}_sebi")
+            ipft_fee = st.number_input("IPFT Fee (%):", min_value=0.0, max_value=0.1, value=def_ipft, step=0.00005, format="%.5f", key=f"{key_prefix}_ipft")
+        with tc4:
+            brok_val = st.number_input("Flat Brokerage / Order (₹):", min_value=0.0, max_value=500.0, value=def_brok, step=5.0, format="%.1f", key=f"{key_prefix}_brok")
+            gst_val = st.number_input("GST Rate (%):", min_value=0.0, max_value=30.0, value=def_gst, step=1.0, format="%.1f", key=f"{key_prefix}_gst")
+            
+        est_statutory_rt = stt_b + stt_s + stamp + (nse_fee * 2) + (sebi_fee * 2) + (ipft_fee * 2)
+        st.markdown(f"<span style='font-size:12px; color:#38bdf8;'>Total Round-Trip Statutory Rate: <strong>{est_statutory_rt:.5f}%</strong> of trade turnover (+ Flat Brokerage ₹{brok_val:.1f} & GST {gst_val:.1f}%)</span>", unsafe_allow_html=True)
+
+    # 3. Execute Simulation Engine
+    sim_df, summary = simulate_capital_and_charges(
+        trades_df=trades_df,
+        initial_capital=init_cap,
+        allocation_pct=float(alloc_pct),
+        compounding=is_compounding,
+        stt_buy_pct=stt_b,
+        stt_sell_pct=stt_s,
+        stamp_duty_pct=stamp,
+        exchange_pct=nse_fee,
+        sebi_pct=sebi_fee,
+        ipft_pct=ipft_fee,
+        brokerage_flat=brok_val,
+        brokerage_pct=0.0,
+        gst_pct=gst_val
+    )
+    
+    if sim_df.empty or not summary:
+        st.info("Insufficient trade records to simulate capital performance.")
+        return
+
+    # 4. Executive Capital Metric Cards
+    final_cap = summary['final_capital']
+    net_pnl = summary['net_profit_inr']
+    net_roi = summary['net_roi_pct']
+    gross_pnl = summary['gross_profit_inr']
+    tot_charges = summary['total_charges_inr']
+    retention = summary['profit_retention_pct']
+    drag = summary['charges_drag_pct']
+    peak = summary['peak_balance']
+    
+    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
+    
+    with m1:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Starting Capital</span>
+            <div class='metric-value' style='color:#38bdf8;'>₹{init_cap:,.0f}</div>
+            <span style='font-size:11px;color:#94a3b8;'>{alloc_pct}% Allocated / Trade</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m2:
+        cap_col = "#00d26a" if final_cap >= init_cap else "#f8312f"
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Final Net Capital</span>
+            <div class='metric-value' style='color:{cap_col};'>₹{final_cap:,.0f}</div>
+            <span style='font-size:11px;color:#94a3b8;'>Peak: ₹{peak:,.0f}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m3:
+        pnl_col = "#00d26a" if net_pnl >= 0 else "#f8312f"
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Net Profit (₹)</span>
+            <div class='metric-value' style='color:{pnl_col};'>{net_pnl:+,.0f}</div>
+            <span style='font-size:11px;color:#94a3b8;'>After All Taxes & Fees</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m4:
+        roi_col = "#00d26a" if net_roi >= 0 else "#f8312f"
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Net ROI (%)</span>
+            <div class='metric-value' style='color:{roi_col};'>{net_roi:+.1f}%</div>
+            <span style='font-size:11px;color:#94a3b8;'>Overall Portfolio Gain</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m5:
+        gp_col = "#00d26a" if gross_pnl >= 0 else "#f8312f"
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Gross Profit (₹)</span>
+            <div class='metric-value' style='color:{gp_col};'>{gross_pnl:+,.0f}</div>
+            <span style='font-size:11px;color:#94a3b8;'>Pre-Tax Signal Return</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m6:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Total Taxes & Fees</span>
+            <div class='metric-value' style='color:#fbbf24;'>-₹{tot_charges:,.0f}</div>
+            <span style='font-size:11px;color:#94a3b8;'>STT, Stamp, NSE, SEBI</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with m7:
+        ret_col = "#00d26a" if retention >= 70 else ("#fbbf24" if retention >= 40 else "#f8312f")
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Profit Retained</span>
+            <div class='metric-value' style='color:{ret_col};'>{retention:.1f}%</div>
+            <span style='font-size:11px;color:#94a3b8;'>Fee Drag: {drag:.1f}%</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    # Itemized Taxes Summary Ribbon
+    st.markdown(f"""
+    <div style='background:rgba(15, 23, 42, 0.6); border:1px solid #1e293b; border-radius:6px; padding:8px 14px; margin-top:8px; font-size:12px; color:#cbd5e1;'>
+        <strong>🧾 Statutory Taxes Breakdown:</strong> &nbsp;
+        <span style='color:#38bdf8;'>STT:</span> ₹{summary['stt_total']:,.2f} &nbsp;|&nbsp;
+        <span style='color:#38bdf8;'>Stamp Duty:</span> ₹{summary['stamp_duty_total']:,.2f} &nbsp;|&nbsp;
+        <span style='color:#38bdf8;'>NSE Charges:</span> ₹{summary['exchange_total']:,.2f} &nbsp;|&nbsp;
+        <span style='color:#38bdf8;'>SEBI & IPFT:</span> ₹{summary['sebi_ipft_total']:,.2f} &nbsp;|&nbsp;
+        <span style='color:#38bdf8;'>Brokerage & GST:</span> ₹{summary['brokerage_gst_total']:,.2f} &nbsp;|&nbsp;
+        <span style='color:#fbbf24;'>Total Deducted:</span> <strong>₹{tot_charges:,.2f}</strong>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # 5. Plotly Interactive Capital Growth Chart
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("#### 📈 Compounded Net Portfolio Balance & Charges Drag Curve")
+    
+    sim_df_sorted = sim_df.sort_values(by='exit_date').reset_index(drop=True)
+    sim_df_sorted['cum_charges'] = sim_df_sorted['total_charges_inr'].cumsum()
+    
+    fig_cap = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.72, 0.28],
+        subplot_titles=(
+            f"Net Capital Growth After Indian Regulatory Charges (₹) — {asset_label}",
+            "Cumulative Regulatory Taxes & Brokerage Deducted (₹)"
+        )
+    )
+    
+    fig_cap.add_trace(go.Scatter(
+        x=sim_df_sorted['exit_date'],
+        y=sim_df_sorted['ending_balance'],
+        mode='lines',
+        name='Net Portfolio Balance (After Charges)',
+        line=dict(color='#00d26a', width=2.5)
+    ), row=1, col=1)
+    
+    fig_cap.add_trace(go.Scatter(
+        x=sim_df_sorted['exit_date'],
+        y=sim_df_sorted['gross_balance'],
+        mode='lines',
+        name='Gross Portfolio Balance (Pre-Tax)',
+        line=dict(color='#38bdf8', width=1.5, dash='dot')
+    ), row=1, col=1)
+    
+    fig_cap.add_trace(go.Scatter(
+        x=[sim_df_sorted['exit_date'].iloc[0], sim_df_sorted['exit_date'].iloc[-1]],
+        y=[init_cap, init_cap],
+        mode='lines',
+        name=f'Initial Capital Baseline (₹{init_cap:,.0f})',
+        line=dict(color='#94a3b8', width=1.5, dash='dash')
+    ), row=1, col=1)
+    
+    fig_cap.add_trace(go.Scatter(
+        x=sim_df_sorted['exit_date'],
+        y=sim_df_sorted['cum_charges'],
+        mode='lines',
+        name='Cumulative Taxes & Fees (₹)',
+        fill='tozeroy',
+        line=dict(color='#fbbf24', width=1.5),
+        fillcolor='rgba(251, 191, 36, 0.20)'
+    ), row=2, col=1)
+    
+    fig_cap.update_layout(
+        template="plotly_dark",
+        height=500,
+        margin=dict(l=40, r=40, t=65, b=30),
+        legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig_cap, width="stretch")
+    
+    # 6. Annual Capital Growth Breakdown Table
+    st.markdown("#### 📅 Calendar Year Capital Growth & Taxes Audit")
+    annual_df = compute_annual_capital_breakdown(sim_df, initial_capital=init_cap)
+    
+    if not annual_df.empty:
+        ann_cfg = {
+            'Year': st.column_config.NumberColumn('Year', format='%d'),
+            'Starting Capital': st.column_config.NumberColumn('Starting Capital (₹)', format='₹%.0f'),
+            'Trades': st.column_config.NumberColumn('Trades', format='%d'),
+            'Gross Return (₹)': st.column_config.NumberColumn('Gross Return (₹)', format='₹%+.0f'),
+            'Taxes & Charges (₹)': st.column_config.NumberColumn('Taxes & Charges (₹)', format='₹%.0f'),
+            'Net Return (₹)': st.column_config.NumberColumn('Net Return (₹)', format='₹%+.0f'),
+            'Ending Capital': st.column_config.NumberColumn('Ending Capital (₹)', format='₹%.0f'),
+            'Net ROI (%)': st.column_config.NumberColumn('Net ROI (%)', format='%+.1f%%')
+        }
+        st.dataframe(annual_df, column_config=ann_cfg, width="stretch", hide_index=True)
+        
+    # 7. Itemized Trade Capital & Charges Audit Ledger
+    st.markdown("#### 📋 Itemized Trade Capital & Charges Audit Ledger")
+    
+    ledger_cols = [
+        'signal_date', 'entry_date', 'exit_date', 'action',
+        'entry_price', 'exit_price', 'qty', 'deployed_capital',
+        'gross_pnl_inr', 'stt_inr', 'stamp_duty_inr', 'exchange_fee_inr',
+        'total_charges_inr', 'net_pnl_inr', 'net_roi_pct', 'ending_balance'
+    ]
+    if 'symbol' in sim_df.columns:
+        ledger_cols.insert(0, 'symbol')
+        
+    disp_ledger = sim_df[ledger_cols].copy()
+    disp_ledger['signal_date'] = pd.to_datetime(disp_ledger['signal_date']).dt.strftime('%Y-%m-%d')
+    disp_ledger['entry_date'] = pd.to_datetime(disp_ledger['entry_date']).dt.strftime('%Y-%m-%d')
+    disp_ledger['exit_date'] = pd.to_datetime(disp_ledger['exit_date']).dt.strftime('%Y-%m-%d')
+    
+    disp_ledger = disp_ledger.rename(columns={
+        'symbol': 'Symbol',
+        'signal_date': 'Signal Date',
+        'entry_date': 'Entry Date',
+        'exit_date': 'Exit Date',
+        'action': 'Action',
+        'entry_price': 'Entry Price',
+        'exit_price': 'Exit Price',
+        'qty': 'Qty',
+        'deployed_capital': 'Capital Deployed',
+        'gross_pnl_inr': 'Gross PnL (₹)',
+        'stt_inr': 'STT (₹)',
+        'stamp_duty_inr': 'Stamp Duty (₹)',
+        'exchange_fee_inr': 'Exchange & SEBI (₹)',
+        'total_charges_inr': 'Total Charges (₹)',
+        'net_pnl_inr': 'Net PnL (₹)',
+        'net_roi_pct': 'Net ROI (%)',
+        'ending_balance': 'Account Balance (₹)'
+    })
+    
+    ledger_cfg = {
+        'Entry Price': st.column_config.NumberColumn('Entry Price', format='₹%.2f'),
+        'Exit Price': st.column_config.NumberColumn('Exit Price', format='₹%.2f'),
+        'Qty': st.column_config.NumberColumn('Qty', format='%d'),
+        'Capital Deployed': st.column_config.NumberColumn('Capital Deployed', format='₹%.0f'),
+        'Gross PnL (₹)': st.column_config.NumberColumn('Gross PnL (₹)', format='₹%+.2f'),
+        'STT (₹)': st.column_config.NumberColumn('STT (₹)', format='₹%.2f'),
+        'Stamp Duty (₹)': st.column_config.NumberColumn('Stamp Duty (₹)', format='₹%.2f'),
+        'Exchange & SEBI (₹)': st.column_config.NumberColumn('Exchange & SEBI (₹)', format='₹%.2f'),
+        'Total Charges (₹)': st.column_config.NumberColumn('Total Charges (₹)', format='₹%.2f'),
+        'Net PnL (₹)': st.column_config.NumberColumn('Net PnL (₹)', format='%+,.2f'),
+        'Net ROI (%)': st.column_config.NumberColumn('Net ROI (%)', format='%+.2f%%'),
+        'Account Balance (₹)': st.column_config.NumberColumn('Account Balance (₹)', format='₹%.2f')
+    }
+    st.dataframe(disp_ledger, column_config=ledger_cfg, width="stretch", hide_index=True)
+    
+    csv_ledger = sim_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label=f"📥 Download Capital & Charges Ledger CSV ({len(sim_df):,} Trades)",
+        data=csv_ledger,
+        file_name=f"{asset_label.lower().replace(' ', '_')}_capital_charges_ledger.csv",
+        mime="text/csv",
+        key=f"{key_prefix}_btn_download_ledger"
+    )
+
+
 def render_portfolio_combined_view(
     symbols_to_run: list,
     timeframe: str,
@@ -1136,6 +1718,13 @@ def render_portfolio_combined_view(
         file_name=f"portfolio_rsi_divergence_{timeframe.lower()}_trades.csv",
         mime="text/csv",
         key="btn_download_portfolio_trades_csv"
+    )
+
+    # 7. CAPITAL GROWTH & INDIAN REGULATORY CHARGES SIMULATION (PORTFOLIO COMBINED)
+    render_capital_charges_simulator(
+        trades_df=trades_df,
+        asset_label="All Stocks Combined Portfolio",
+        key_prefix="port_combined"
     )
 
 # =============================================================
@@ -1965,5 +2554,13 @@ def render_rsi_divergence_section(analytics_engine):
         file_name=f"{selected_asset.lower()}_rsi_divergence_{timeframe.lower()}_trades.csv",
         mime="text/csv"
     )
+
+    # 7. CAPITAL GROWTH & INDIAN REGULATORY CHARGES SIMULATION (FOR STOCKS ONLY, EXCLUDED FOR NIFTY 50)
+    if selected_asset != "NIFTY 50":
+        render_capital_charges_simulator(
+            trades_df=trades_df,
+            asset_label=selected_asset,
+            key_prefix="single_stock"
+        )
 
 
