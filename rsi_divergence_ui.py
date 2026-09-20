@@ -817,6 +817,129 @@ def simulate_capital_and_charges(
     net_roi_pct = (net_profit_inr / initial_capital) * 100.0 if initial_capital > 0 else 0.0
     profit_retention = (net_profit_inr / total_gross_pnl * 100.0) if total_gross_pnl > 0 else 0.0
     charges_drag = (total_charges / total_gross_pnl * 100.0) if total_gross_pnl > 0 else 0.0
+
+    # 1. Streaks calculation (Winning & Losing based on Net PnL after charges)
+    win_streak = 0
+    max_win_streak = 0
+    loss_streak = 0
+    max_loss_streak = 0
+    for pnl in sim_df['net_pnl_inr']:
+        if pnl > 0:
+            win_streak += 1
+            loss_streak = 0
+            if win_streak > max_win_streak:
+                max_win_streak = win_streak
+        elif pnl < 0:
+            loss_streak += 1
+            win_streak = 0
+            if loss_streak > max_loss_streak:
+                max_loss_streak = loss_streak
+        else:
+            win_streak = 0
+            loss_streak = 0
+
+    # 2. Best and Worst Trades (Net PnL after charges)
+    best_idx = sim_df['net_pnl_inr'].idxmax()
+    worst_idx = sim_df['net_pnl_inr'].idxmin()
+    best_row = sim_df.loc[best_idx]
+    worst_row = sim_df.loc[worst_idx]
+
+    best_trade_inr = float(best_row['net_pnl_inr'])
+    best_trade_pct = float(best_row.get('net_roi_pct', 0.0))
+    best_trade_date = pd.to_datetime(best_row['exit_date']).strftime('%Y-%m-%d')
+    best_trade_sym = str(best_row.get('symbol', ''))
+
+    worst_trade_inr = float(worst_row['net_pnl_inr'])
+    worst_trade_pct = float(worst_row.get('net_roi_pct', 0.0))
+    worst_trade_date = pd.to_datetime(worst_row['exit_date']).strftime('%Y-%m-%d')
+    worst_trade_sym = str(worst_row.get('symbol', ''))
+
+    # 3. Drawdown Episodes & Recovery Days Calculation
+    hwm = float(initial_capital)
+    hwm_date = pd.to_datetime(sim_df['entry_date'].iloc[0])
+    
+    dd_episodes = []
+    in_dd = False
+    curr_peak_bal = hwm
+    curr_peak_date = hwm_date
+    curr_trough_bal = hwm
+    curr_trough_date = hwm_date
+    
+    for idx, row in sim_df.iterrows():
+        bal = float(row['ending_balance'])
+        exit_dt = pd.to_datetime(row['exit_date'])
+        
+        if bal >= hwm:
+            if in_dd:
+                ep_dd_inr = curr_peak_bal - curr_trough_bal
+                ep_dd_pct = (ep_dd_inr / curr_peak_bal) * 100.0 if curr_peak_bal > 0 else 0.0
+                dd_episodes.append({
+                    'peak_date': curr_peak_date,
+                    'trough_date': curr_trough_date,
+                    'recovery_date': exit_dt,
+                    'peak_bal': curr_peak_bal,
+                    'trough_bal': curr_trough_bal,
+                    'dd_inr': ep_dd_inr,
+                    'dd_pct': ep_dd_pct,
+                    'days_peak_to_rec': (exit_dt - curr_peak_date).days,
+                    'days_trough_to_rec': (exit_dt - curr_trough_date).days,
+                    'recovered': True
+                })
+                in_dd = False
+            hwm = bal
+            hwm_date = exit_dt
+        else:
+            if not in_dd:
+                in_dd = True
+                curr_peak_bal = hwm
+                curr_peak_date = hwm_date
+                curr_trough_bal = bal
+                curr_trough_date = exit_dt
+            else:
+                if bal < curr_trough_bal:
+                    curr_trough_bal = bal
+                    curr_trough_date = exit_dt
+
+    if in_dd:
+        last_exit_dt = pd.to_datetime(sim_df['exit_date'].iloc[-1])
+        ep_dd_inr = curr_peak_bal - curr_trough_bal
+        ep_dd_pct = (ep_dd_inr / curr_peak_bal) * 100.0 if curr_peak_bal > 0 else 0.0
+        dd_episodes.append({
+            'peak_date': curr_peak_date,
+            'trough_date': curr_trough_date,
+            'recovery_date': None,
+            'peak_bal': curr_peak_bal,
+            'trough_bal': curr_trough_bal,
+            'dd_inr': ep_dd_inr,
+            'dd_pct': ep_dd_pct,
+            'days_peak_to_rec': (last_exit_dt - curr_peak_date).days,
+            'days_trough_to_rec': (last_exit_dt - curr_trough_date).days,
+            'recovered': False
+        })
+        
+    if dd_episodes:
+        max_ep = max(dd_episodes, key=lambda x: x['dd_inr'])
+        max_dd_inr = max_ep['dd_inr']
+        max_dd_pct = max_ep['dd_pct']
+        max_dd_recovered = max_ep['recovered']
+        max_dd_recovery_days = max_ep['days_trough_to_rec']
+        max_dd_peak_to_rec_days = max_ep['days_peak_to_rec']
+        max_dd_peak_date = max_ep['peak_date'].strftime('%Y-%m-%d')
+        max_dd_trough_date = max_ep['trough_date'].strftime('%Y-%m-%d')
+        max_dd_rec_date = max_ep['recovery_date'].strftime('%Y-%m-%d') if max_ep['recovery_date'] is not None else 'Ongoing'
+        longest_recovery_days = max(ep['days_trough_to_rec'] for ep in dd_episodes)
+        longest_peak_to_rec_days = max(ep['days_peak_to_rec'] for ep in dd_episodes)
+    else:
+        max_dd_inr = 0.0
+        max_dd_pct = 0.0
+        max_dd_recovered = True
+        max_dd_recovery_days = 0
+        max_dd_peak_to_rec_days = 0
+        max_dd_peak_date = '-'
+        max_dd_trough_date = '-'
+        max_dd_rec_date = '-'
+        longest_recovery_days = 0
+        longest_peak_to_rec_days = 0
     
     summary = {
         'initial_capital': initial_capital,
@@ -836,6 +959,24 @@ def simulate_capital_and_charges(
         'peak_balance': peak_balance,
         'max_dd_inr': max_dd_inr,
         'max_dd_pct': max_dd_pct,
+        'max_win_streak': max_win_streak,
+        'max_loss_streak': max_loss_streak,
+        'best_trade_inr': best_trade_inr,
+        'best_trade_pct': best_trade_pct,
+        'best_trade_date': best_trade_date,
+        'best_trade_sym': best_trade_sym,
+        'worst_trade_inr': worst_trade_inr,
+        'worst_trade_pct': worst_trade_pct,
+        'worst_trade_date': worst_trade_date,
+        'worst_trade_sym': worst_trade_sym,
+        'max_dd_recovery_days': max_dd_recovery_days,
+        'max_dd_peak_to_rec_days': max_dd_peak_to_rec_days,
+        'max_dd_recovered': max_dd_recovered,
+        'max_dd_peak_date': max_dd_peak_date,
+        'max_dd_trough_date': max_dd_trough_date,
+        'max_dd_rec_date': max_dd_rec_date,
+        'longest_recovery_days': longest_recovery_days,
+        'longest_peak_to_rec_days': longest_peak_to_rec_days,
         'total_executed_trades': len(sim_df)
     }
     return sim_df, summary
@@ -1085,16 +1226,93 @@ def render_capital_charges_simulator(
         </div>
         """, unsafe_allow_html=True)
         
+    # Row 2: Risk, Streaks & Drawdown Analytics (6 Cards)
+    st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+    r1, r2, r3, r4, r5, r6 = st.columns(6)
+    
+    with r1:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Max Drawdown</span>
+            <div class='metric-value-neg'>-₹{summary['max_dd_inr']:,.0f}</div>
+            <span style='font-size:11px;color:#f8312f;'>-{summary['max_dd_pct']:.1f}% Peak-to-Trough</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with r2:
+        if summary['max_dd_inr'] == 0:
+            rec_val = "0 Days"
+            rec_sub = "No Drawdowns"
+            rec_col = "#00d26a"
+        elif summary['max_dd_recovered']:
+            rec_val = f"{summary['max_dd_peak_to_rec_days']:,} Days"
+            rec_sub = f"Trough to Rec: {summary['max_dd_recovery_days']:,}d"
+            rec_col = "#38bdf8"
+        else:
+            rec_val = f"{summary['max_dd_peak_to_rec_days']:,}d (Ongoing)"
+            rec_sub = f"Trough: {summary['max_dd_trough_date']}"
+            rec_col = "#fbbf24"
+            
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Days to Recover DD</span>
+            <div class='metric-value' style='color:{rec_col};'>{rec_val}</div>
+            <span style='font-size:11px;color:#94a3b8;'>{rec_sub}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with r3:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Winning Streak</span>
+            <div class='metric-value' style='color:#00d26a;'>{summary['max_win_streak']} Trades</div>
+            <span style='font-size:11px;color:#94a3b8;'>Max Consecutive Wins</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with r4:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Losing Streak</span>
+            <div class='metric-value' style='color:#f8312f;'>{summary['max_loss_streak']} Trades</div>
+            <span style='font-size:11px;color:#94a3b8;'>Max Consecutive Losses</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with r5:
+        best_sym_txt = f"{summary['best_trade_sym']} • " if summary.get('best_trade_sym') else ""
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Best Trade</span>
+            <div class='metric-value' style='color:#00d26a;'>+₹{summary['best_trade_inr']:,.0f}</div>
+            <span style='font-size:11px;color:#94a3b8;'>{best_sym_txt}+{summary['best_trade_pct']:.1f}% ({summary['best_trade_date']})</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with r6:
+        worst_sym_txt = f"{summary['worst_trade_sym']} • " if summary.get('worst_trade_sym') else ""
+        worst_val = summary['worst_trade_inr']
+        worst_col = "#f8312f" if worst_val < 0 else "#94a3b8"
+        worst_prefix = "-" if worst_val < 0 else ""
+        st.markdown(f"""
+        <div class='metric-card'>
+            <span class='metric-label'>Worst Trade</span>
+            <div class='metric-value' style='color:{worst_col};'>{worst_prefix}₹{abs(worst_val):,.0f}</div>
+            <span style='font-size:11px;color:#94a3b8;'>{worst_sym_txt}{summary['worst_trade_pct']:+.1f}% ({summary['worst_trade_date']})</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
     # Itemized Taxes Summary Ribbon
     st.markdown(f"""
-    <div style='background:rgba(15, 23, 42, 0.6); border:1px solid #1e293b; border-radius:6px; padding:8px 14px; margin-top:8px; font-size:12px; color:#cbd5e1;'>
+    <div style='background:rgba(15, 23, 42, 0.6); border:1px solid #1e293b; border-radius:6px; padding:8px 14px; margin-top:10px; font-size:12px; color:#cbd5e1;'>
         <strong>🧾 Statutory Taxes Breakdown:</strong> &nbsp;
         <span style='color:#38bdf8;'>STT:</span> ₹{summary['stt_total']:,.2f} &nbsp;|&nbsp;
         <span style='color:#38bdf8;'>Stamp Duty:</span> ₹{summary['stamp_duty_total']:,.2f} &nbsp;|&nbsp;
         <span style='color:#38bdf8;'>NSE Charges:</span> ₹{summary['exchange_total']:,.2f} &nbsp;|&nbsp;
         <span style='color:#38bdf8;'>SEBI & IPFT:</span> ₹{summary['sebi_ipft_total']:,.2f} &nbsp;|&nbsp;
         <span style='color:#38bdf8;'>Brokerage & GST:</span> ₹{summary['brokerage_gst_total']:,.2f} &nbsp;|&nbsp;
-        <span style='color:#fbbf24;'>Total Deducted:</span> <strong>₹{tot_charges:,.2f}</strong>
+        <span style='color:#fbbf24;'>Total Deducted:</span> <strong>₹{tot_charges:,.2f}</strong> &nbsp;|&nbsp;
+        <span style='color:#a78bfa;'>Max DD Episode:</span> Peak {summary['max_dd_peak_date']} ➔ Trough {summary['max_dd_trough_date']} ➔ Recovery: {summary['max_dd_rec_date']}
     </div>
     """, unsafe_allow_html=True)
     
@@ -1179,7 +1397,8 @@ def render_capital_charges_simulator(
         'signal_date', 'entry_date', 'exit_date', 'action',
         'entry_price', 'exit_price', 'qty', 'deployed_capital',
         'gross_pnl_inr', 'stt_inr', 'stamp_duty_inr', 'exchange_fee_inr',
-        'total_charges_inr', 'net_pnl_inr', 'net_roi_pct', 'ending_balance'
+        'total_charges_inr', 'net_pnl_inr', 'net_roi_pct', 'ending_balance',
+        'drawdown_pct'
     ]
     if 'symbol' in sim_df.columns:
         ledger_cols.insert(0, 'symbol')
@@ -1206,7 +1425,8 @@ def render_capital_charges_simulator(
         'total_charges_inr': 'Total Charges (₹)',
         'net_pnl_inr': 'Net PnL (₹)',
         'net_roi_pct': 'Net ROI (%)',
-        'ending_balance': 'Account Balance (₹)'
+        'ending_balance': 'Account Balance (₹)',
+        'drawdown_pct': 'Drawdown (%)'
     })
     
     ledger_cfg = {
@@ -1219,9 +1439,10 @@ def render_capital_charges_simulator(
         'Stamp Duty (₹)': st.column_config.NumberColumn('Stamp Duty (₹)', format='₹%.2f'),
         'Exchange & SEBI (₹)': st.column_config.NumberColumn('Exchange & SEBI (₹)', format='₹%.2f'),
         'Total Charges (₹)': st.column_config.NumberColumn('Total Charges (₹)', format='₹%.2f'),
-        'Net PnL (₹)': st.column_config.NumberColumn('Net PnL (₹)', format='%+,.2f'),
+        'Net PnL (₹)': st.column_config.NumberColumn('Net PnL (₹)', format='₹%+.2f'),
         'Net ROI (%)': st.column_config.NumberColumn('Net ROI (%)', format='%+.2f%%'),
-        'Account Balance (₹)': st.column_config.NumberColumn('Account Balance (₹)', format='₹%.2f')
+        'Account Balance (₹)': st.column_config.NumberColumn('Account Balance (₹)', format='₹%.2f'),
+        'Drawdown (%)': st.column_config.NumberColumn('Drawdown (%)', format='-%.1f%%')
     }
     st.dataframe(disp_ledger, column_config=ledger_cfg, width="stretch", hide_index=True)
     
