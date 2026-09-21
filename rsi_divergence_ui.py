@@ -265,11 +265,10 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
     gross_profit = wins['pnl_pts'].sum() if not wins.empty else 0.0
     gross_loss = abs(losses['pnl_pts'].sum()) if not losses.empty else 1e-6
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else np.nan
+    cum_pts = trades_df['pnl_pts'].cumsum() if 'pnl_pts' in trades_df.columns else pd.Series(dtype=float)
     
-    cum_pts = trades_df['pnl_pts'].cumsum()
-    
-    # Calculate drawdown episodes and peak-to-trough dates
-    start_dt = pd.to_datetime(trades_df['entry_date'].iloc[0]) if 'entry_date' in trades_df.columns else pd.Timestamp.now()
+    # 1. Calculate drawdown episodes and peak-to-trough dates (POINTS - for NIFTY 50)
+    start_dt = pd.to_datetime(trades_df['entry_date'].iloc[0]) if 'entry_date' in trades_df.columns and not trades_df.empty else pd.Timestamp.now()
     hwm = 0.0
     hwm_dt = start_dt
     cum = 0.0
@@ -282,7 +281,7 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
     dd_episodes = []
     
     for _, row in trades_df.iterrows():
-        pnl = row['pnl_pts']
+        pnl = float(row['pnl_pts']) if 'pnl_pts' in row and pd.notna(row['pnl_pts']) else 0.0
         cum += pnl
         exit_dt = pd.to_datetime(row['exit_date']) if 'exit_date' in row and pd.notna(row['exit_date']) else (
             pd.to_datetime(row['entry_date']) if 'entry_date' in row and pd.notna(row['entry_date']) else start_dt
@@ -317,7 +316,7 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
                     curr_trough_dt = exit_dt
                     
     if in_dd:
-        last_exit_dt = pd.to_datetime(trades_df['exit_date'].iloc[-1]) if 'exit_date' in trades_df.columns else curr_trough_dt
+        last_exit_dt = pd.to_datetime(trades_df['exit_date'].iloc[-1]) if 'exit_date' in trades_df.columns and pd.notna(trades_df['exit_date'].iloc[-1]) else curr_trough_dt
         dd_episodes.append({
             'peak_dt': curr_peak_dt,
             'trough_dt': curr_trough_dt,
@@ -352,6 +351,90 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
         max_dd_days = 0
         max_dd_pt_days = 0
         max_dd_period_str = 'No Drawdown'
+
+    # 2. Calculate drawdown episodes and peak-to-trough dates (PERCENTAGE - for Equities & Portfolio Leaderboard)
+    hwm_pct = 0.0
+    hwm_dt_pct = start_dt
+    cum_pct = 0.0
+    in_dd_pct = False
+    curr_peak_pct = 0.0
+    curr_peak_dt_pct = start_dt
+    curr_trough_pct = 0.0
+    curr_trough_dt_pct = start_dt
+    
+    dd_episodes_pct = []
+    
+    for _, row in trades_df.iterrows():
+        pnl_pct_val = float(row['pnl_pct']) if 'pnl_pct' in row and pd.notna(row['pnl_pct']) else 0.0
+        cum_pct += pnl_pct_val
+        exit_dt = pd.to_datetime(row['exit_date']) if 'exit_date' in row and pd.notna(row['exit_date']) else (
+            pd.to_datetime(row['entry_date']) if 'entry_date' in row and pd.notna(row['entry_date']) else start_dt
+        )
+        
+        if cum_pct >= hwm_pct:
+            if in_dd_pct:
+                dd_episodes_pct.append({
+                    'peak_dt': curr_peak_dt_pct,
+                    'trough_dt': curr_trough_dt_pct,
+                    'rec_dt': exit_dt,
+                    'peak_pct': curr_peak_pct,
+                    'trough_pct': curr_trough_pct,
+                    'dd_pct': curr_trough_pct - curr_peak_pct,
+                    'recovered': True,
+                    'days': (exit_dt - curr_peak_dt_pct).days,
+                    'peak_to_trough_days': (curr_trough_dt_pct - curr_peak_dt_pct).days
+                })
+                in_dd_pct = False
+            hwm_pct = cum_pct
+            hwm_dt_pct = exit_dt
+        else:
+            if not in_dd_pct:
+                in_dd_pct = True
+                curr_peak_pct = hwm_pct
+                curr_peak_dt_pct = hwm_dt_pct
+                curr_trough_pct = cum_pct
+                curr_trough_dt_pct = exit_dt
+            else:
+                if cum_pct < curr_trough_pct:
+                    curr_trough_pct = cum_pct
+                    curr_trough_dt_pct = exit_dt
+                    
+    if in_dd_pct:
+        last_exit_dt = pd.to_datetime(trades_df['exit_date'].iloc[-1]) if 'exit_date' in trades_df.columns and pd.notna(trades_df['exit_date'].iloc[-1]) else curr_trough_dt_pct
+        dd_episodes_pct.append({
+            'peak_dt': curr_peak_dt_pct,
+            'trough_dt': curr_trough_dt_pct,
+            'rec_dt': None,
+            'peak_pct': curr_peak_pct,
+            'trough_pct': curr_trough_pct,
+            'dd_pct': curr_trough_pct - curr_peak_pct,
+            'recovered': False,
+            'days': (last_exit_dt - curr_peak_dt_pct).days,
+            'peak_to_trough_days': (curr_trough_dt_pct - curr_peak_dt_pct).days
+        })
+        
+    if dd_episodes_pct:
+        worst_ep_pct = min(dd_episodes_pct, key=lambda x: x['dd_pct'])
+        p_pct_str = worst_ep_pct['peak_dt'].strftime('%Y-%m-%d')
+        t_pct_str = worst_ep_pct['trough_dt'].strftime('%Y-%m-%d')
+        r_pct_str = worst_ep_pct['rec_dt'].strftime('%Y-%m-%d') if worst_ep_pct['rec_dt'] is not None else 'Ongoing'
+        max_dd_pct = float(worst_ep_pct['dd_pct'])
+        max_dd_pct_peak_date = p_pct_str
+        max_dd_pct_trough_date = t_pct_str
+        max_dd_pct_rec_date = r_pct_str
+        max_dd_pct_recovered = worst_ep_pct['recovered']
+        max_dd_pct_days = int(worst_ep_pct['days'])
+        max_dd_pct_pt_days = int(worst_ep_pct['peak_to_trough_days'])
+        max_dd_pct_period_str = f"{p_pct_str} ➔ {t_pct_str}"
+    else:
+        max_dd_pct = 0.0
+        max_dd_pct_peak_date = '-'
+        max_dd_pct_trough_date = '-'
+        max_dd_pct_rec_date = '-'
+        max_dd_pct_recovered = True
+        max_dd_pct_days = 0
+        max_dd_pct_pt_days = 0
+        max_dd_pct_period_str = 'No Drawdown'
     
     avg_win_pts = wins['pnl_pts'].mean() if not wins.empty else 0.0
     avg_loss_pts = losses['pnl_pts'].mean() if not losses.empty else 0.0
@@ -365,7 +448,9 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
         'total_trades': total_trades,
         'win_rate': win_rate,
         'total_pnl_pts': total_pnl_pts,
+        'total_pnl_pct': trades_df['pnl_pct'].sum() if 'pnl_pct' in trades_df.columns and not trades_df.empty else 0.0,
         'profit_factor': profit_factor,
+        # Points Drawdown (NIFTY 50)
         'max_dd_pts': max_dd_pts,
         'max_dd_peak_date': max_dd_peak_date,
         'max_dd_trough_date': max_dd_trough_date,
@@ -374,7 +459,17 @@ def compute_backtest_stats(trades_df: pd.DataFrame) -> dict:
         'max_dd_days': max_dd_days,
         'max_dd_pt_days': max_dd_pt_days,
         'max_dd_period_str': max_dd_period_str,
-        'avg_trade_pct': trades_df['pnl_pct'].mean(),
+        # Percentage Drawdown (Equities & Portfolio Matrix)
+        'max_dd_pct': max_dd_pct,
+        'max_dd_pct_peak_date': max_dd_pct_peak_date,
+        'max_dd_pct_trough_date': max_dd_pct_trough_date,
+        'max_dd_pct_rec_date': max_dd_pct_rec_date,
+        'max_dd_pct_recovered': max_dd_pct_recovered,
+        'max_dd_pct_days': max_dd_pct_days,
+        'max_dd_pct_pt_days': max_dd_pct_pt_days,
+        'max_dd_pct_period_str': max_dd_pct_period_str,
+        # Averages & Holding
+        'avg_trade_pct': trades_df['pnl_pct'].mean() if 'pnl_pct' in trades_df.columns and not trades_df.empty else 0.0,
         'avg_win_pts': avg_win_pts,
         'avg_loss_pts': avg_loss_pts,
         'reward_risk_ratio': reward_risk_ratio,
@@ -629,109 +724,54 @@ def run_portfolio_combined_backtest(
             if enable_ema_filter:
                 df_calc['ema'] = df_calc['close'].ewm(span=int(ema_period), adjust=False).mean()
                 
-            if not sig_df_full.empty and start_dt and end_dt:
-                sig_df = sig_df_full[(sig_df_full['signal_date'].dt.date >= start_dt) & (sig_df_full['signal_date'].dt.date <= end_dt)].copy().reset_index(drop=True)
-            else:
-                sig_df = sig_df_full
-                
-            if sig_df.empty:
+            if sig_df_full.empty:
                 continue
                 
-            t_df, _, sk_df, _ = run_rsi_divergence_backtest(
-                df_calc, sig_df, sl_pct=sl_pct, tgt_pct=tgt_pct, entry_mode=entry_mode,
+            t_df_full, _, sk_df_full, _ = run_rsi_divergence_backtest(
+                df_calc, sig_df_full, sl_pct=sl_pct, tgt_pct=tgt_pct, entry_mode=entry_mode,
                 enable_ema_filter=enable_ema_filter, ema_period=int(ema_period)
             )
             
+            if not t_df_full.empty and start_dt and end_dt:
+                t_df = t_df_full[
+                    (pd.to_datetime(t_df_full['signal_date']).dt.date >= start_dt) &
+                    (pd.to_datetime(t_df_full['signal_date']).dt.date <= end_dt)
+                ].copy().reset_index(drop=True)
+            else:
+                t_df = t_df_full
+                
+            if not sk_df_full.empty and start_dt and end_dt:
+                sk_df = sk_df_full[
+                    (pd.to_datetime(sk_df_full['signal_date']).dt.date >= start_dt) &
+                    (pd.to_datetime(sk_df_full['signal_date']).dt.date <= end_dt)
+                ].copy().reset_index(drop=True)
+            else:
+                sk_df = sk_df_full
+                
             if not t_df.empty:
                 t_df['symbol'] = sym
                 all_trades.append(t_df)
                 
-                n_t = len(t_df)
+                s_stats = compute_backtest_stats(t_df)
+                n_t = s_stats['total_trades']
                 n_w = int((t_df['win'] == True).sum())
-                wr = (n_w / n_t) * 100.0 if n_t > 0 else 0.0
-                pos_ret = t_df[t_df['pnl_pct'] > 0]['pnl_pct'].sum()
-                neg_ret = abs(t_df[t_df['pnl_pct'] < 0]['pnl_pct'].sum())
-                pf = (pos_ret / neg_ret) if neg_ret > 0 else (99.9 if pos_ret > 0 else 0.0)
-                
-                # Calculate individual stock drawdown episodes and duration
-                t_df_sorted = t_df.sort_values('exit_date').reset_index(drop=True)
-                s_dt = pd.to_datetime(t_df_sorted['entry_date'].iloc[0])
-                s_hwm = 0.0
-                s_hwm_dt = s_dt
-                s_cum = 0.0
-                s_in_dd = False
-                s_curr_peak_val = 0.0
-                s_curr_peak_dt = s_dt
-                s_curr_trough_val = 0.0
-                s_curr_trough_dt = s_dt
-                s_episodes = []
-                
-                for _, r_t in t_df_sorted.iterrows():
-                    pnl_val = float(r_t['pnl_pct'])
-                    s_cum += pnl_val
-                    x_dt = pd.to_datetime(r_t['exit_date'])
-                    if s_cum >= s_hwm:
-                        if s_in_dd:
-                            s_episodes.append({
-                                'peak_dt': s_curr_peak_dt,
-                                'trough_dt': s_curr_trough_dt,
-                                'rec_dt': x_dt,
-                                'dd_pct': s_curr_trough_val - s_curr_peak_val,
-                                'rec_days': (x_dt - s_curr_peak_dt).days,
-                                'pt_days': (s_curr_trough_dt - s_curr_peak_dt).days,
-                                'recovered': True
-                            })
-                            s_in_dd = False
-                        s_hwm = s_cum
-                        s_hwm_dt = x_dt
-                    else:
-                        if not s_in_dd:
-                            s_in_dd = True
-                            s_curr_peak_val = s_hwm
-                            s_curr_peak_dt = s_hwm_dt
-                            s_curr_trough_val = s_cum
-                            s_curr_trough_dt = x_dt
-                        else:
-                            if s_cum < s_curr_trough_val:
-                                s_curr_trough_val = s_cum
-                                s_curr_trough_dt = x_dt
-                                
-                if s_in_dd:
-                    s_last_dt = pd.to_datetime(t_df_sorted['exit_date'].iloc[-1])
-                    s_episodes.append({
-                        'peak_dt': s_curr_peak_dt,
-                        'trough_dt': s_curr_trough_dt,
-                        'rec_dt': None,
-                        'dd_pct': s_curr_trough_val - s_curr_peak_val,
-                        'rec_days': (s_last_dt - s_curr_peak_dt).days,
-                        'pt_days': (s_curr_trough_dt - s_curr_peak_dt).days,
-                        'recovered': False
-                    })
-                    
-                if s_episodes:
-                    s_worst_ep = min(s_episodes, key=lambda x: x['dd_pct'])
-                    s_max_dd_pct = float(s_worst_ep['dd_pct'])
-                    s_max_dd_days = int(s_worst_ep['rec_days'])
-                else:
-                    s_max_dd_pct = 0.0
-                    s_max_dd_days = 0
                 
                 stock_stats_list.append({
                     'Symbol': sym,
                     'Trades': n_t,
-                    'Win Rate (%)': wr,
+                    'Win Rate (%)': s_stats['win_rate'],
                     'Wins': n_w,
                     'Losses': n_t - n_w,
-                    'Profit Factor': pf,
-                    'Avg Return (%)': t_df['pnl_pct'].mean(),
-                    'Total Return (%)': t_df['pnl_pct'].sum(),
+                    'Profit Factor': s_stats['profit_factor'],
+                    'Avg Return (%)': s_stats['avg_trade_pct'],
+                    'Total Return (%)': s_stats['total_pnl_pct'],
                     'Best Trade (%)': t_df['pnl_pct'].max(),
                     'Worst Trade (%)': t_df['pnl_pct'].min(),
-                    'Max DD (%)': s_max_dd_pct,
-                    'Max DD Holding (Days)': s_max_dd_days,
-                    'Avg Holding (Days)': t_df['holding_days'].mean(),
-                    'Min Holding (Days)': int(t_df['holding_days'].min()),
-                    'Max Holding (Days)': int(t_df['holding_days'].max()),
+                    'Max DD (%)': s_stats['max_dd_pct'],
+                    'Max DD Holding (Days)': s_stats['max_dd_pct_pt_days'],
+                    'Avg Holding (Days)': s_stats['avg_holding_days'],
+                    'Min Holding (Days)': s_stats['min_holding_days'],
+                    'Max Holding (Days)': s_stats['max_holding_days'],
                     'Avg Holding (Bars)': t_df['holding_bars'].mean()
                 })
                 
@@ -2003,7 +2043,7 @@ def render_portfolio_combined_view(
             'Best Trade (%)': st.column_config.NumberColumn('Best Trade (%)', format='%+.1f%%'),
             'Worst Trade (%)': st.column_config.NumberColumn('Worst Trade (%)', format='%+.1f%%'),
             'Max DD (%)': st.column_config.NumberColumn('Max DD (%)', format='%.2f%%', help='Maximum peak-to-trough equity drawdown percentage'),
-            'Max DD Holding (Days)': st.column_config.NumberColumn('Max DD Holding (Days)', format='%d', help='Duration in calendar days of the maximum drawdown episode (Peak to Recovery/Ongoing)'),
+            'Max DD Holding (Days)': st.column_config.NumberColumn('Max DD Holding (Days)', format='%d', help='Duration in calendar days of the maximum drawdown episode (Peak to Trough)'),
             'Avg Holding (Days)': st.column_config.NumberColumn('Avg Holding (Days)', format='%.1f'),
             'Min Holding (Days)': st.column_config.NumberColumn('Min Holding (Days)', format='%d'),
             'Max Holding (Days)': st.column_config.NumberColumn('Max Holding (Days)', format='%d'),
@@ -2335,11 +2375,11 @@ def render_rsi_divergence_section(analytics_engine):
 
     # Load raw asset data
     if asset_type == "🌐 All Stocks Combined (Portfolio Aggregate)":
-        min_data_date = pd.to_datetime("2000-01-01").date()
+        min_data_date = pd.to_datetime("1990-01-01").date()
         max_data_date = pd.to_datetime("2026-09-19").date()
     else:
         raw_df = load_asset_ohlc(selected_asset, timeframe)
-        min_data_date = raw_df['date'].min().date() if not raw_df.empty else pd.to_datetime("2000-01-01").date()
+        min_data_date = raw_df['date'].min().date() if not raw_df.empty else pd.to_datetime("1990-01-01").date()
         max_data_date = raw_df['date'].max().date() if not raw_df.empty else pd.to_datetime("2026-09-19").date()
 
     
@@ -2588,18 +2628,34 @@ def render_rsi_divergence_section(analytics_engine):
     st.markdown("---")
     m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
     
+    is_nifty = (selected_asset == "NIFTY 50")
     total_trades = stats['total_trades']
     win_rate = stats['win_rate']
     total_pnl = stats['total_pnl_pts']
     pf = stats['profit_factor']
-    max_dd = stats['max_dd_pts']
-    max_dd_period_str = stats.get('max_dd_period_str', '')
-    max_dd_peak_date = stats.get('max_dd_peak_date', '-')
-    max_dd_trough_date = stats.get('max_dd_trough_date', '-')
-    max_dd_rec_date = stats.get('max_dd_rec_date', '-')
-    max_dd_recovered = stats.get('max_dd_recovered', True)
-    max_dd_days = stats.get('max_dd_days', 0)
-    max_dd_pt_days = stats.get('max_dd_pt_days', 0)
+    
+    if is_nifty:
+        max_dd = stats['max_dd_pts']
+        max_dd_val_str = f"{max_dd:,.1f}"
+        max_dd_period_str = stats.get('max_dd_period_str', '')
+        max_dd_peak_date = stats.get('max_dd_peak_date', '-')
+        max_dd_trough_date = stats.get('max_dd_trough_date', '-')
+        max_dd_rec_date = stats.get('max_dd_rec_date', '-')
+        max_dd_recovered = stats.get('max_dd_recovered', True)
+        max_dd_days = stats.get('max_dd_days', 0)
+        max_dd_pt_days = stats.get('max_dd_pt_days', 0)
+    else:
+        max_dd_pct_val = stats.get('max_dd_pct', 0.0)
+        max_dd = max_dd_pct_val
+        max_dd_val_str = f"{max_dd_pct_val:.2f}%"
+        max_dd_period_str = stats.get('max_dd_pct_period_str', '')
+        max_dd_peak_date = stats.get('max_dd_pct_peak_date', '-')
+        max_dd_trough_date = stats.get('max_dd_pct_trough_date', '-')
+        max_dd_rec_date = stats.get('max_dd_pct_rec_date', '-')
+        max_dd_recovered = stats.get('max_dd_pct_recovered', True)
+        max_dd_days = stats.get('max_dd_pct_days', 0)
+        max_dd_pt_days = stats.get('max_dd_pct_pt_days', 0)
+
     avg_trade_pct = stats['avg_trade_pct']
     avg_h_days = stats.get('avg_holding_days', 0.0)
     min_h_days = stats.get('min_holding_days', 0)
@@ -2622,12 +2678,13 @@ def render_rsi_divergence_section(analytics_engine):
     with m5:
         if max_dd_period_str and max_dd_period_str != "No Drawdown":
             rec_status = f"Recovery: {max_dd_rec_date} ({max_dd_days} Days)" if max_dd_recovered else f"Status: Ongoing / Unrecovered ({max_dd_days} Days)"
-            dd_tooltip = f"Peak: {max_dd_peak_date} | Bottom (Trough): {max_dd_trough_date} ({max_dd_pt_days} days) | {rec_status}"
+            pts_extra = f" | Points DD: {stats['max_dd_pts']:,.1f} pts" if not is_nifty else ""
+            dd_tooltip = f"Peak: {max_dd_peak_date} | Bottom (Trough): {max_dd_trough_date} ({max_dd_pt_days} days) | {rec_status}{pts_extra}"
             dd_sub = f"<span style='color:#94a3b8;'>{max_dd_pt_days} days </span><span style='color:#fca5a5;'>({max_dd_period_str})</span>"
         else:
             dd_tooltip = "No Drawdowns Detected"
             dd_sub = "<span style='color:#94a3b8;'>0 days (No Drawdown)</span>"
-        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Max Drawdown</span><div class='metric-value-neg'>{max_dd:,.1f}</div><span style='font-size:10.5px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;' title='{dd_tooltip}'>{dd_sub}</span></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Max Drawdown</span><div class='metric-value-neg'>{max_dd_val_str}</div><span style='font-size:10.5px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;' title='{dd_tooltip}'>{dd_sub}</span></div>""", unsafe_allow_html=True)
     with m6:
         avg_col = "#00d26a" if avg_trade_pct >= 0 else "#f8312f"
         st.markdown(f"""<div class='metric-card'><span class='metric-label'>Avg Trade %</span><div class='metric-value' style='color:{avg_col};'>{avg_trade_pct:+.2f}%</div><span style='font-size:11px;color:#94a3b8;'>Per Executed Trade</span></div>""", unsafe_allow_html=True)
@@ -2745,10 +2802,10 @@ def render_rsi_divergence_section(analytics_engine):
                 'Filter Impact / Gain': f"{pf - all_stats.get('profit_factor', 0):+.2f}" if not np.isnan(pf) and not np.isnan(all_stats.get('profit_factor', np.nan)) else '-'
             },
             {
-                'Metric Dimension': 'Max Drawdown (Points)',
-                'Unfiltered (All Signals)': f"{all_stats.get('max_dd_pts', 0):,.1f}",
-                f'With {ema_period} EMA Filter': f"{max_dd:,.1f}",
-                'Filter Impact / Gain': f"{max_dd - all_stats.get('max_dd_pts', 0):+,.1f} pts saved"
+                'Metric Dimension': 'Max Drawdown (Points)' if is_nifty else 'Max Drawdown (%)',
+                'Unfiltered (All Signals)': f"{all_stats.get('max_dd_pts', 0):,.1f}" if is_nifty else f"{all_stats.get('max_dd_pct', 0.0):.2f}%",
+                f'With {ema_period} EMA Filter': f"{max_dd:,.1f}" if is_nifty else f"{stats.get('max_dd_pct', 0.0):.2f}%",
+                'Filter Impact / Gain': f"{max_dd - all_stats.get('max_dd_pts', 0):+,.1f} pts saved" if is_nifty else f"{stats.get('max_dd_pct', 0.0) - all_stats.get('max_dd_pct', 0.0):+.2f}%"
             },
             {
                 'Metric Dimension': 'Average Trade Return (%)',
