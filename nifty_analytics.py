@@ -1,4 +1,6 @@
 import os
+import datetime
+import calendar
 import pandas as pd
 import polars as pl
 import numpy as np
@@ -17,6 +19,128 @@ def _resolve_spot_file():
 
 SPOT_FILE = _resolve_spot_file()
 
+def compute_monthly_expiries(trading_days):
+    """
+    Computes monthly contract expiry dates based on official NSE schedule:
+    - June 2000 – Aug 31, 2025: Last Thursday of each month.
+    - Sept 1, 2025 – Present: Last Tuesday of each month.
+    Holiday shifting rule: If the scheduled day is an exchange holiday (no daily data),
+    shifts backwards to the immediately preceding trading day in that month.
+    """
+    if not trading_days:
+        return []
+    min_date, max_date = trading_days[0], trading_days[-1]
+    months = pd.date_range(min_date.replace(day=1), max_date, freq='MS')
+    monthly_expiries = []
+    for m in months:
+        year, month = m.year, m.month
+        target_weekday = 3 if m < pd.Timestamp('2025-09-01') else 1  # Thu=3, Tue=1
+        _, last_day = calendar.monthrange(year, month)
+        sched_date = None
+        for day in range(last_day, 0, -1):
+            dt = datetime.date(year, month, day)
+            if dt.weekday() == target_weekday:
+                sched_date = dt
+                break
+        if sched_date:
+            actual = [d for d in trading_days if d <= sched_date and d.year == year and d.month == month]
+            if actual:
+                act = max(actual)
+                monthly_expiries.append({
+                    'sched_date': sched_date,
+                    'actual_date': act,
+                    'shifted': (sched_date != act)
+                })
+    return monthly_expiries
+
+def compute_weekly_expiries(trading_days, start_date=None):
+    """
+    Computes weekly contract expiry dates based on official NSE schedule:
+    - Feb 11, 2019 – Aug 31, 2025: Every Thursday.
+    - Sept 1, 2025 – Present: Every Tuesday.
+    (If start_date < 2019-02-11, uses Thursday schedule for extended backtests).
+    Holiday shifting rule: If scheduled expiry is a holiday, shifts back to the preceding available trading day.
+    """
+    if not trading_days:
+        return []
+    if start_date is None:
+        start_date = trading_days[0]
+    end_date = trading_days[-1]
+    
+    candidates = []
+    cur = start_date
+    while cur <= end_date:
+        if cur < datetime.date(2025, 9, 1):
+            if cur.weekday() == 3:  # Thursday
+                candidates.append(cur)
+        else:
+            if cur.weekday() == 1:  # Tuesday
+                candidates.append(cur)
+        cur += datetime.timedelta(days=1)
+        
+    actual_expiries = []
+    prev_exp = None
+    for cand in candidates:
+        valid_days = [d for d in trading_days if d <= cand and (prev_exp is None or d > prev_exp)]
+        if valid_days:
+            act = max(valid_days)
+            actual_expiries.append({
+                'sched_date': cand,
+                'actual_date': act,
+                'shifted': (cand != act)
+            })
+            prev_exp = act
+    return actual_expiries
+
+def build_expiry_cycles(daily_df, expiry_meta_list, start_filter=None):
+    """
+    Aggregates daily candles into complete expiry cycles bounded by contract settlement dates.
+    - Cycle Open: First trading day immediately following previous expiry (or dataset start).
+    - Cycle Close: Expiry trading day.
+    OHLC:
+      open = first day open
+      high = max high across all days in cycle
+      low = min low across all days in cycle
+      close = expiry day close
+    """
+    if not expiry_meta_list or daily_df.empty:
+        return pd.DataFrame()
+        
+    df = daily_df.sort_values('date').copy()
+    if start_filter:
+        df = df[df['date'].dt.date >= start_filter]
+        
+    actual_dates = [item['actual_date'] for item in expiry_meta_list]
+    exp_ts = [pd.Timestamp(d) for d in actual_dates]
+    
+    indices = np.searchsorted(exp_ts, df['date'])
+    valid_mask = indices < len(exp_ts)
+    df = df[valid_mask]
+    indices = indices[valid_mask]
+    
+    df['cycle_idx'] = indices
+    grouped = df.groupby('cycle_idx').agg(
+        cycle_start=('date', 'first'),
+        date=('date', 'last'),
+        open=('open', 'first'),
+        high=('high', 'max'),
+        low=('low', 'min'),
+        close=('close', 'last'),
+        trading_days=('date', 'count')
+    ).reset_index()
+    
+    sched_dates = [item['sched_date'] for item in expiry_meta_list]
+    shifted_flags = [item['shifted'] for item in expiry_meta_list]
+    
+    grouped['sched_date'] = grouped['cycle_idx'].apply(lambda idx: pd.Timestamp(sched_dates[idx]) if idx < len(sched_dates) else None)
+    grouped['is_shifted'] = grouped['cycle_idx'].apply(lambda idx: shifted_flags[idx] if idx < len(shifted_flags) else False)
+    grouped['range_pct'] = (grouped['high'] - grouped['low']) / grouped['open'] * 100.0
+    grouped['move_pct'] = (grouped['close'] - grouped['open']) / grouped['open'] * 100.0
+    grouped['start_day_name'] = grouped['cycle_start'].dt.day_name()
+    grouped['expiry_day_name'] = grouped['date'].dt.day_name()
+    
+    return grouped.drop(columns=['cycle_idx'])
+
 class NiftyAnalyticsEngine:
     def __init__(self, parquet_path=None):
         self.parquet_path = parquet_path or _resolve_spot_file()
@@ -24,6 +148,12 @@ class NiftyAnalyticsEngine:
         self._daily_df = None
         self._weekly_df = None
         self._monthly_df = None
+        self._monthly_expiry_df = None
+        self._weekly_expiry_official_df = None
+        self._weekly_expiry_full_df = None
+        self._monthly_expiries_meta = []
+        self._weekly_expiries_official_meta = []
+        self._weekly_expiries_full_meta = []
         self._grouped_cache = {}
         
     def load_data(self):
@@ -76,15 +206,45 @@ class NiftyAnalyticsEngine:
             monthly['move_pct'] = (monthly['close'] - monthly['open']) / monthly['open'] * 100.0
             self._monthly_df = monthly
             
-    def get_range_and_move_stats(self, timeframe="Daily", threshold_pct=1.0):
+            # 4. Expiry Aggregations (NSE F&O Schedule & Holiday Shifts)
+            trading_days = sorted(daily['date'].dt.date.unique())
+            
+            # Monthly Expiries (2015 – 2026)
+            self._monthly_expiries_meta = compute_monthly_expiries(trading_days)
+            self._monthly_expiry_df = build_expiry_cycles(daily, self._monthly_expiries_meta)
+            
+            # Weekly Expiries (Official F&O Era: Feb 11, 2019+)
+            start_official = datetime.date(2019, 2, 11)
+            self._weekly_expiries_official_meta = compute_weekly_expiries(trading_days, start_official)
+            self._weekly_expiry_official_df = build_expiry_cycles(daily, self._weekly_expiries_official_meta, start_official)
+            
+            # Weekly Expiries (Full Extended: 2015+)
+            self._weekly_expiries_full_meta = compute_weekly_expiries(trading_days, trading_days[0])
+            self._weekly_expiry_full_df = build_expiry_cycles(daily, self._weekly_expiries_full_meta)
+            
+    def get_range_and_move_stats(self, timeframe="Daily", threshold_pct=1.0, close_type="TradingView", weekly_scope="Official"):
         self.load_data()
         
+        is_expiry = ("expiry" in str(close_type).lower())
+        
         if timeframe == "Weekly":
-            df = self._weekly_df
-            period_label = "Weeks"
+            if is_expiry:
+                if "full" in str(weekly_scope).lower() or "extended" in str(weekly_scope).lower():
+                    df = self._weekly_expiry_full_df
+                    period_label = "Expiry Weeks (2015–Present)"
+                else:
+                    df = self._weekly_expiry_official_df
+                    period_label = "Expiry Weeks (Feb 2019–Present)"
+            else:
+                df = self._weekly_df
+                period_label = "Weeks"
         elif timeframe == "Monthly":
-            df = self._monthly_df
-            period_label = "Months"
+            if is_expiry:
+                df = self._monthly_expiry_df
+                period_label = "Expiry Months"
+            else:
+                df = self._monthly_df
+                period_label = "Months"
         else:
             df = self._daily_df
             period_label = "Days"

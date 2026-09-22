@@ -186,12 +186,54 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
             st.session_state.stat_thresh_pct = target_pct_slider
             target_pct = target_pct_slider
             
+    # Close Aggregation Mode Selector (TradingView Close vs Expiry Close)
+    st.markdown("---")
+    c_mode1, c_mode2 = st.columns([1.8, 3.2])
+    with c_mode1:
+        close_type = st.radio(
+            "🎯 Candle Close Aggregation Mode:",
+            [
+                "📈 TradingView Close (Standard Calendar)",
+                "⚡ Expiry Close (NSE F&O Schedule)"
+            ],
+            index=0,
+            key="s1_close_type",
+            help="• TradingView Close: Standard calendar aggregation (Monday open to Friday close for Weekly, 1st to Month-end for Monthly).\n• Expiry Close: F&O contract settlement cycles (Thursdays up to Aug 2025, Tuesdays from Sept 2025 onwards). Preceding trading day is used on holidays."
+        )
+    with c_mode2:
+        is_expiry_mode = ("expiry" in str(close_type).lower())
+        if is_expiry_mode:
+            st.markdown("""
+            <div style='background:rgba(56, 189, 248, 0.08); border-left: 3px solid #38bdf8; padding: 10px 14px; border-radius: 6px; font-size: 13px; color: #cbd5e1; margin-top: 4px;'>
+                <strong>⚡ NSE F&O Expiry Settlement Rules Active:</strong><br>
+                • <strong>Monthly Expiry:</strong> Last Thursday (up to Aug 31, 2025) ➔ Last Tuesday (from Sept 1, 2025 onwards).<br>
+                • <strong>Weekly Expiry:</strong> Every Thursday (up to Aug 31, 2025) ➔ Every Tuesday (from Sept 1, 2025 onwards).<br>
+                • <strong>Holiday Shift Rule:</strong> If expiry day is an exchange holiday, settlement shifts to the preceding trading day (e.g. Wednesday or Monday/Friday). Next cycle opens immediately on the next trading session.
+            </div>
+            """, unsafe_allow_html=True)
+            weekly_scope_choice = st.radio(
+                "🗓️ Weekly Expiry Contract Scope:",
+                [
+                    "🎯 Official F&O Weekly Era (Feb 2019 – Present: ~397 Weeks)",
+                    "🕰️ Extended History (Synthetic Thursday 2015 – 2019: ~610 Weeks)"
+                ],
+                index=0,
+                key="s1_weekly_scope",
+                horizontal=True,
+                help="• Official F&O Weekly Era: Matches NSE regulatory history (weekly options officially launched on Feb 11, 2019).\n• Extended History: Evaluates Thursday-to-Thursday weekly cycles back to 2015 for longer historical backtesting."
+            )
+            weekly_scope = "Official" if "official" in weekly_scope_choice.lower() else "Full"
+        else:
+            weekly_scope = "Official"
+            st.caption("ℹ️ Standard TradingView weekly candles (Monday open to Friday close) and monthly candles (1st trading day to last trading day of the calendar month).")
+            
     # Compute Daily, Weekly, and Monthly stats
-    stats_daily = analytics_engine.get_range_and_move_stats("Daily", target_pct)
-    stats_weekly = analytics_engine.get_range_and_move_stats("Weekly", target_pct)
-    stats_monthly = analytics_engine.get_range_and_move_stats("Monthly", target_pct)
+    stats_daily = analytics_engine.get_range_and_move_stats("Daily", target_pct, close_type=close_type, weekly_scope=weekly_scope)
+    stats_weekly = analytics_engine.get_range_and_move_stats("Weekly", target_pct, close_type=close_type, weekly_scope=weekly_scope)
+    stats_monthly = analytics_engine.get_range_and_move_stats("Monthly", target_pct, close_type=close_type, weekly_scope=weekly_scope)
         
-    st.markdown(f"### 🌐 Multi-Timeframe Move Comparison (Threshold: &plusmn;{target_pct:.2f}%)")
+    mode_tag = " [Expiry Close]" if is_expiry_mode else " [TradingView Close]"
+    st.markdown(f"### 🌐 Multi-Timeframe Move Comparison (Threshold: &plusmn;{target_pct:.2f}%){mode_tag}")
     
     # 3 Side-by-Side Timeframe Columns
     col_d, col_w, col_m = st.columns(3)
@@ -214,26 +256,28 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
         """, unsafe_allow_html=True)
         
     with col_w:
+        w_title = f"📆 WEEKLY - {stats_weekly['period_label']} ({stats_weekly['total_periods']:,})" if is_expiry_mode else f"📆 WEEKLY ({stats_weekly['total_periods']:,} Weeks)"
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-label" style="font-size: 14px; color: #a78bfa;">📆 WEEKLY ({stats_weekly['total_periods']:,} Weeks)</div>
+            <div class="metric-label" style="font-size: 14px; color: #a78bfa;">{w_title}</div>
             <hr style="margin: 6px 0; border-color: #232f48;">
             <div style="font-size: 13px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</div>
-            <div class="metric-value" style="color: #a78bfa;">{stats_weekly['pct_within_move']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_weekly['cnt_within_move']:,} weeks)</span></div>
+            <div class="metric-value" style="color: #a78bfa;">{stats_weekly['pct_within_move']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_weekly['cnt_within_move']:,} periods)</span></div>
             <div style="font-size: 13px; color: #94a3b8; margin-top: 6px;">Total High-Low Range &le; {target_pct:.2f}%:</div>
-            <div class="metric-value" style="color: #00d26a;">{stats_weekly['pct_within_range']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_weekly['cnt_within_range']:,} weeks)</span></div>
+            <div class="metric-value" style="color: #00d26a;">{stats_weekly['pct_within_range']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_weekly['cnt_within_range']:,} periods)</span></div>
             <div style="font-size: 12px; color: #cbd5e1; margin-top: 8px; line-height: 1.6;">
-                • Bullish Breakout (> +{target_pct:.2f}%): <strong>{stats_weekly['pct_above_pos']:.1f}%</strong> ({stats_weekly['cnt_above_pos']:,} weeks)<br>
-                • Bearish Breakdown (< -{target_pct:.2f}%): <strong>{stats_weekly['pct_below_neg']:.1f}%</strong> ({stats_weekly['cnt_below_neg']:,} weeks)<br>
+                • Bullish Breakout (> +{target_pct:.2f}%): <strong>{stats_weekly['pct_above_pos']:.1f}%</strong> ({stats_weekly['cnt_above_pos']:,} periods)<br>
+                • Bearish Breakdown (< -{target_pct:.2f}%): <strong>{stats_weekly['pct_below_neg']:.1f}%</strong> ({stats_weekly['cnt_below_neg']:,} periods)<br>
                 • Average Weekly Range: <strong>{stats_weekly['avg_range_pct']:.2f}%</strong> (Median: {stats_weekly['median_range_pct']:.2f}%)
             </div>
         </div>
         """, unsafe_allow_html=True)
         
     with col_m:
+        m_title = f"🗓️ MONTHLY - Expiry ({stats_monthly['total_periods']:,} Months)" if is_expiry_mode else f"🗓️ MONTHLY ({stats_monthly['total_periods']:,} Months)"
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-label" style="font-size: 14px; color: #f43f5e;">🗓️ MONTHLY ({stats_monthly['total_periods']:,} Months)</div>
+            <div class="metric-label" style="font-size: 14px; color: #f43f5e;">{m_title}</div>
             <hr style="margin: 6px 0; border-color: #232f48;">
             <div style="font-size: 13px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</div>
             <div class="metric-value" style="color: #f43f5e;">{stats_monthly['pct_within_move']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_monthly['cnt_within_move']:,} months)</span></div>
@@ -248,6 +292,8 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
         """, unsafe_allow_html=True)
         
     # Unified Comparative Summary Table
+    tf_w_name = f"Weekly ({stats_weekly['period_label']})" if is_expiry_mode else "Weekly"
+    tf_m_name = f"Monthly ({stats_monthly['period_label']})" if is_expiry_mode else "Monthly"
     comp_df = pd.DataFrame([
         {
             "Timeframe": "Daily",
@@ -260,7 +306,7 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
             "Median Range (%)": f"{stats_daily['median_range_pct']:.2f}%"
         },
         {
-            "Timeframe": "Weekly",
+            "Timeframe": tf_w_name,
             "Total Periods": stats_weekly['total_periods'],
             f"Within ±{target_pct:.2f}% Move (%)": f"{stats_weekly['pct_within_move']:.1f}% ({stats_weekly['cnt_within_move']:,})",
             f"High-Low Range ≤ {target_pct:.2f}% (%)": f"{stats_weekly['pct_within_range']:.1f}% ({stats_weekly['cnt_within_range']:,})",
@@ -270,7 +316,7 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
             "Median Range (%)": f"{stats_weekly['median_range_pct']:.2f}%"
         },
         {
-            "Timeframe": "Monthly",
+            "Timeframe": tf_m_name,
             "Total Periods": stats_monthly['total_periods'],
             f"Within ±{target_pct:.2f}% Move (%)": f"{stats_monthly['pct_within_move']:.1f}% ({stats_monthly['cnt_within_move']:,})",
             f"High-Low Range ≤ {target_pct:.2f}% (%)": f"{stats_monthly['pct_within_range']:.1f}% ({stats_monthly['cnt_within_range']:,})",
@@ -303,31 +349,73 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
         
     with d_tab2:
         df_w = stats_weekly['df']
+        w_chart_label = f"Weekly ({stats_weekly['period_label']})" if is_expiry_mode else "Weekly"
         fig_ww = go.Figure()
         fig_ww.add_trace(go.Histogram(
-            x=df_w['move_pct'], nbinsx=60, marker_color='#a78bfa', opacity=0.75, name='Weekly Move %'
+            x=df_w['move_pct'], nbinsx=60, marker_color='#a78bfa', opacity=0.75, name=f'{w_chart_label} Move %'
         ))
         fig_ww.add_vline(x=-target_pct, line_dash="dash", line_color="#ef4444", line_width=2,
                          annotation_text=f"-{target_pct:.2f}% Threshold", annotation_position="top left")
         fig_ww.add_vline(x=target_pct, line_dash="dash", line_color="#00d26a", line_width=2,
                          annotation_text=f"+{target_pct:.2f}% Threshold", annotation_position="top right")
-        fig_ww.update_layout(title=f"Weekly Open-to-Close Move Distribution ({stats_weekly['total_periods']:,} Weeks)",
-                             xaxis_title="Move %", yaxis_title="Number of Weeks", template="plotly_dark", height=380)
+        fig_ww.update_layout(title=f"{w_chart_label} Open-to-Close Move Distribution ({stats_weekly['total_periods']:,} Periods)",
+                             xaxis_title="Move %", yaxis_title="Number of Periods", template="plotly_dark", height=380)
         st.plotly_chart(fig_ww, width="stretch")
         
     with d_tab3:
         df_m = stats_monthly['df']
+        m_chart_label = f"Monthly ({stats_monthly['period_label']})" if is_expiry_mode else "Monthly"
         fig_mm = go.Figure()
         fig_mm.add_trace(go.Histogram(
-            x=df_m['move_pct'], nbinsx=40, marker_color='#f43f5e', opacity=0.75, name='Monthly Move %'
+            x=df_m['move_pct'], nbinsx=40, marker_color='#f43f5e', opacity=0.75, name=f'{m_chart_label} Move %'
         ))
         fig_mm.add_vline(x=-target_pct, line_dash="dash", line_color="#ef4444", line_width=2,
                          annotation_text=f"-{target_pct:.2f}% Threshold", annotation_position="top left")
         fig_mm.add_vline(x=target_pct, line_dash="dash", line_color="#00d26a", line_width=2,
                          annotation_text=f"+{target_pct:.2f}% Threshold", annotation_position="top right")
-        fig_mm.update_layout(title=f"Monthly Open-to-Close Move Distribution ({stats_monthly['total_periods']:,} Months)",
-                             xaxis_title="Move %", yaxis_title="Number of Months", template="plotly_dark", height=380)
+        fig_mm.update_layout(title=f"{m_chart_label} Open-to-Close Move Distribution ({stats_monthly['total_periods']:,} Periods)",
+                             xaxis_title="Move %", yaxis_title="Number of Periods", template="plotly_dark", height=380)
         st.plotly_chart(fig_mm, width="stretch")
+
+    # Itemized Expiry Cycles & Holiday Settlements Audit Ledger
+    if is_expiry_mode:
+        st.markdown("---")
+        with st.expander("🔍 Inspect Expiry Cycles & Holiday Settlements Audit Ledger", expanded=True):
+            exp_tab1, exp_tab2 = st.tabs(["📆 Weekly Expiry Cycles", "🗓️ Monthly Expiry Cycles"])
+            with exp_tab1:
+                df_w_exp = stats_weekly['df'].copy()
+                st.markdown(f"**Itemized Weekly Expiry Cycles ({len(df_w_exp)} Contracts):**")
+                show_w = pd.DataFrame({
+                    'Cycle Start': df_w_exp['cycle_start'].dt.strftime('%Y-%m-%d') + ' (' + df_w_exp['start_day_name'] + ')',
+                    'Expiry Date': df_w_exp['date'].dt.strftime('%Y-%m-%d') + ' (' + df_w_exp['expiry_day_name'] + ')',
+                    'Scheduled Expiry': df_w_exp['sched_date'].dt.strftime('%Y-%m-%d'),
+                    'Settlement Status': df_w_exp['is_shifted'].apply(lambda x: '⚠️ Holiday Shift (Preceding Trading Day)' if x else '✅ Normal Settlement'),
+                    'Trading Days': df_w_exp['trading_days'],
+                    'Cycle Open': df_w_exp['open'].apply(lambda x: f"₹{x:,.2f}"),
+                    'Cycle High': df_w_exp['high'].apply(lambda x: f"₹{x:,.2f}"),
+                    'Cycle Low': df_w_exp['low'].apply(lambda x: f"₹{x:,.2f}"),
+                    'Expiry Close': df_w_exp['close'].apply(lambda x: f"₹{x:,.2f}"),
+                    'Range %': df_w_exp['range_pct'].apply(lambda x: f"{x:.2f}%"),
+                    'Move %': df_w_exp['move_pct'].apply(lambda x: f"{x:+.2f}%")
+                })
+                st.dataframe(show_w, hide_index=True, width="stretch")
+            with exp_tab2:
+                df_m_exp = stats_monthly['df'].copy()
+                st.markdown(f"**Itemized Monthly Expiry Cycles ({len(df_m_exp)} Contracts):**")
+                show_m = pd.DataFrame({
+                    'Cycle Start': df_m_exp['cycle_start'].dt.strftime('%Y-%m-%d') + ' (' + df_m_exp['start_day_name'] + ')',
+                    'Expiry Date': df_m_exp['date'].dt.strftime('%Y-%m-%d') + ' (' + df_m_exp['expiry_day_name'] + ')',
+                    'Scheduled Expiry': df_m_exp['sched_date'].dt.strftime('%Y-%m-%d'),
+                    'Settlement Status': df_m_exp['is_shifted'].apply(lambda x: '⚠️ Holiday Shift (Preceding Trading Day)' if x else '✅ Normal Settlement'),
+                    'Trading Days': df_m_exp['trading_days'],
+                    'Cycle Open': df_m_exp['open'].apply(lambda x: f"₹{x:,.2f}"),
+                    'Cycle High': df_m_exp['high'].apply(lambda x: f"₹{x:,.2f}"),
+                    'Cycle Low': df_m_exp['low'].apply(lambda x: f"₹{x:,.2f}"),
+                    'Expiry Close': df_m_exp['close'].apply(lambda x: f"₹{x:,.2f}"),
+                    'Range %': df_m_exp['range_pct'].apply(lambda x: f"{x:.2f}%"),
+                    'Move %': df_m_exp['move_pct'].apply(lambda x: f"{x:+.2f}%")
+                })
+                st.dataframe(show_m, hide_index=True, width="stretch")
 
 # =============================================================
 # SECTION 2: FIRST-TOUCH STRETCH, FORWARD EXTENSIONS & REVERSALS
