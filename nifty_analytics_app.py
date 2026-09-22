@@ -13,7 +13,12 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import importlib
-from nifty_analytics import NiftyAnalyticsEngine
+import nifty_analytics
+try:
+    nifty_analytics = importlib.reload(nifty_analytics)
+except Exception:
+    pass
+from nifty_analytics import NiftyAnalyticsEngine, SPOT_FILE
 
 # Hot-reload safety for dynamically modified modules on Streamlit Cloud
 try:
@@ -78,23 +83,37 @@ st.markdown("""
 # LIGHTWEIGHT IN-MEMORY DATA ENGINE
 # =============================================================
 import os
-from nifty_analytics import SPOT_FILE
 
-def _get_spot_mtime():
+def _get_engine_cache_key():
+    keys = []
     try:
         if os.path.exists(SPOT_FILE):
-            return os.path.getmtime(SPOT_FILE)
+            keys.append(os.path.getmtime(SPOT_FILE))
     except Exception:
         pass
-    return 0
+    try:
+        if hasattr(nifty_analytics, '__file__') and os.path.exists(nifty_analytics.__file__):
+            keys.append(os.path.getmtime(nifty_analytics.__file__))
+    except Exception:
+        pass
+    return tuple(keys)
 
 @st.cache_resource(show_spinner="Loading Nifty 1-minute spot data (< 0.5s)...")
-def get_analytics_engine(mtime):
+def get_analytics_engine(cache_key):
     engine = NiftyAnalyticsEngine()
     engine.load_data()
     return engine
 
-analytics_engine = get_analytics_engine(_get_spot_mtime())
+analytics_engine = get_analytics_engine(_get_engine_cache_key())
+
+# Self-healing safeguard: ensure cached engine has expiry structures loaded
+if not hasattr(analytics_engine, '_monthly_expiry_df') or analytics_engine._monthly_expiry_df is None:
+    try:
+        st.cache_resource.clear()
+    except Exception:
+        pass
+    analytics_engine = NiftyAnalyticsEngine()
+    analytics_engine.load_data()
 
 # Dynamic Dataset Metrics
 total_days = len(analytics_engine._daily_df)
@@ -227,10 +246,20 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
             weekly_scope = "Official"
             st.caption("ℹ️ Standard TradingView weekly candles (Monday open to Friday close) and monthly candles (1st trading day to last trading day of the calendar month).")
             
-    # Compute Daily, Weekly, and Monthly stats
-    stats_daily = analytics_engine.get_range_and_move_stats("Daily", target_pct, close_type=close_type, weekly_scope=weekly_scope)
-    stats_weekly = analytics_engine.get_range_and_move_stats("Weekly", target_pct, close_type=close_type, weekly_scope=weekly_scope)
-    stats_monthly = analytics_engine.get_range_and_move_stats("Monthly", target_pct, close_type=close_type, weekly_scope=weekly_scope)
+    # Compute Daily, Weekly, and Monthly stats (with hot-reload fallback for Streamlit Cloud)
+    try:
+        stats_daily = analytics_engine.get_range_and_move_stats("Daily", target_pct, close_type=close_type, weekly_scope=weekly_scope)
+        stats_weekly = analytics_engine.get_range_and_move_stats("Weekly", target_pct, close_type=close_type, weekly_scope=weekly_scope)
+        stats_monthly = analytics_engine.get_range_and_move_stats("Monthly", target_pct, close_type=close_type, weekly_scope=weekly_scope)
+    except TypeError:
+        st.cache_resource.clear()
+        import nifty_analytics
+        nifty_analytics = importlib.reload(nifty_analytics)
+        analytics_engine = nifty_analytics.NiftyAnalyticsEngine()
+        analytics_engine.load_data()
+        stats_daily = analytics_engine.get_range_and_move_stats("Daily", target_pct, close_type=close_type, weekly_scope=weekly_scope)
+        stats_weekly = analytics_engine.get_range_and_move_stats("Weekly", target_pct, close_type=close_type, weekly_scope=weekly_scope)
+        stats_monthly = analytics_engine.get_range_and_move_stats("Monthly", target_pct, close_type=close_type, weekly_scope=weekly_scope)
         
     mode_tag = " [Expiry Close]" if is_expiry_mode else " [TradingView Close]"
     st.markdown(f"### 🌐 Multi-Timeframe Move Comparison (Threshold: &plusmn;{target_pct:.2f}%){mode_tag}")

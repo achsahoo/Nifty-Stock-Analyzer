@@ -222,8 +222,12 @@ class NiftyAnalyticsEngine:
             self._weekly_expiries_full_meta = compute_weekly_expiries(trading_days, trading_days[0])
             self._weekly_expiry_full_df = build_expiry_cycles(daily, self._weekly_expiries_full_meta)
             
-    def get_range_and_move_stats(self, timeframe="Daily", threshold_pct=1.0, close_type="TradingView", weekly_scope="Official"):
+    def get_range_and_move_stats(self, timeframe="Daily", threshold_pct=1.0, close_type="TradingView", weekly_scope="Official", *args, **kwargs):
         self.load_data()
+        
+        # Self-healing safeguard if attributes missing on cached instances
+        if not hasattr(self, '_monthly_expiry_df') or self._monthly_expiry_df is None:
+            self.load_data()
         
         is_expiry = ("expiry" in str(close_type).lower())
         
