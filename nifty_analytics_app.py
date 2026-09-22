@@ -285,118 +285,66 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
     # 3 Side-by-Side Timeframe Columns
     col_d, col_w, col_m = st.columns(3)
     
+    def _build_metric_card(title, title_color, stats, target_pct, unit_name):
+        return f"""<div class="metric-card">
+<div class="metric-label" style="font-size: 14.5px; color: {title_color}; font-weight: 700;">{title}</div>
+<div style="height: 1px; background: #232f48; margin: 6px 0;"></div>
+<div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 2px;">
+<span style="font-size: 12.5px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</span>
+<span style="font-size: 15px; font-weight: 700; color: {title_color};">{stats['pct_within_move']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats['cnt_within_move']:,})</span></span>
+</div>
+<div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px;">
+<span style="font-size: 12.5px; color: #94a3b8;">Total High-Low Range &le; {target_pct:.2f}%:</span>
+<span style="font-size: 15px; font-weight: 700; color: #00d26a;">{stats['pct_within_range']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats['cnt_within_range']:,})</span></span>
+</div>
+<div style="height: 1px; background: #1e293b; margin: 8px 0;"></div>
+<div style="font-size: 12.5px; font-weight: 700; color: #00d26a; margin-bottom: 2px;">🟢 Upside Stretch & Close (+{target_pct:.2f}%):</div>
+<div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; padding-left: 4px;">
+• High Touched/Crossed &ge; +{target_pct:.2f}%: <strong style="color: #00d26a;">{stats['pct_high_breach_pos']:.1f}%</strong> ({stats['cnt_high_breach_pos']:,} {unit_name})<br>
+• Closed ABOVE +{target_pct:.2f}% (Breakout): <strong style="color: #38bdf8;">{stats['pct_above_pos']:.1f}%</strong> ({stats['cnt_above_pos']:,} {unit_name})<br>
+• Closed BELOW +{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats['pct_close_below_pos']:.1f}%</strong> ({stats['cnt_close_below_pos']:,} {unit_name})
+</div>
+<div style="height: 1px; background: #1e293b; margin: 8px 0;"></div>
+<div style="font-size: 12.5px; font-weight: 700; color: #f87171; margin-bottom: 2px;">🔴 Downside Drop & Close (-{target_pct:.2f}%):</div>
+<div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; padding-left: 4px;">
+• Low Touched/Crossed &le; -{target_pct:.2f}%: <strong style="color: #f87171;">{stats['pct_low_breach_neg']:.1f}%</strong> ({stats['cnt_low_breach_neg']:,} {unit_name})<br>
+• Closed BELOW -{target_pct:.2f}% (Breakdown): <strong style="color: #f8312f;">{stats['pct_below_neg']:.1f}%</strong> ({stats['cnt_below_neg']:,} {unit_name})<br>
+• Closed ABOVE -{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats['pct_close_above_neg']:.1f}%</strong> ({stats['cnt_close_above_neg']:,} {unit_name})
+</div>
+<div style="height: 1px; background: #1e293b; margin: 8px 0;"></div>
+<div style="font-size: 12px; color: #94a3b8;">
+Average Range: <strong style="color: #f8fafc;">{stats['avg_range_pct']:.2f}%</strong> (Median: {stats['median_range_pct']:.2f}%)
+</div>
+</div>"""
+
     with col_d:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-label" style="font-size: 14.5px; color: #38bdf8; font-weight: 700;">📅 DAILY ({stats_daily['total_periods']:,} Days)</div>
-            <hr style="margin: 6px 0; border-color: #232f48;">
-            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 2px;">
-                <span style="font-size: 12.5px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</span>
-                <span style="font-size: 15px; font-weight: 700; color: #38bdf8;">{stats_daily['pct_within_move']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_daily['cnt_within_move']:,})</span></span>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px;">
-                <span style="font-size: 12.5px; color: #94a3b8;">Total High-Low Range &le; {target_pct:.2f}%:</span>
-                <span style="font-size: 15px; font-weight: 700; color: #00d26a;">{stats_daily['pct_within_range']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_daily['cnt_within_range']:,})</span></span>
-            </div>
-            
-            <hr style="margin: 8px 0; border-color: #1e293b;">
-            <div style="font-size: 12.5px; font-weight: 700; color: #00d26a; margin-bottom: 2px;">🟢 Upside Stretch & Close (+{target_pct:.2f}%):</div>
-            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
-                • High Touched/Crossed &ge; +{target_pct:.2f}%: <strong style="color: #00d26a;">{stats_daily['pct_high_breach_pos']:.1f}%</strong> ({stats_daily['cnt_high_breach_pos']:,} days)<br>
-                • Closed ABOVE +{target_pct:.2f}% (Breakout): <strong style="color: #38bdf8;">{stats_daily['pct_above_pos']:.1f}%</strong> ({stats_daily['cnt_above_pos']:,} days)<br>
-                • Closed BELOW +{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_daily['pct_close_below_pos']:.1f}%</strong> ({stats_daily['cnt_close_below_pos']:,} days)
-            </div>
-            
-            <hr style="margin: 8px 0; border-color: #1e293b;">
-            <div style="font-size: 12.5px; font-weight: 700; color: #f87171; margin-bottom: 2px;">🔴 Downside Drop & Close (-{target_pct:.2f}%):</div>
-            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
-                • Low Touched/Crossed &le; -{target_pct:.2f}%: <strong style="color: #f87171;">{stats_daily['pct_low_breach_neg']:.1f}%</strong> ({stats_daily['cnt_low_breach_neg']:,} days)<br>
-                • Closed BELOW -{target_pct:.2f}% (Breakdown): <strong style="color: #f8312f;">{stats_daily['pct_below_neg']:.1f}%</strong> ({stats_daily['cnt_below_neg']:,} days)<br>
-                • Closed ABOVE -{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_daily['pct_close_above_neg']:.1f}%</strong> ({stats_daily['cnt_close_above_neg']:,} days)
-            </div>
-            
-            <hr style="margin: 8px 0; border-color: #1e293b;">
-            <div style="font-size: 12px; color: #94a3b8;">
-                Average Daily Range: <strong style="color: #f8fafc;">{stats_daily['avg_range_pct']:.2f}%</strong> (Median: {stats_daily['median_range_pct']:.2f}%)
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(_build_metric_card(
+            f"📅 DAILY ({stats_daily['total_periods']:,} Days)",
+            "#38bdf8",
+            stats_daily,
+            target_pct,
+            "days"
+        ), unsafe_allow_html=True)
         
     with col_w:
         w_title = f"📆 WEEKLY - {stats_weekly['period_label']} ({stats_weekly['total_periods']:,})" if is_expiry_mode else f"📆 WEEKLY ({stats_weekly['total_periods']:,} Weeks)"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-label" style="font-size: 14.5px; color: #a78bfa; font-weight: 700;">{w_title}</div>
-            <hr style="margin: 6px 0; border-color: #232f48;">
-            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 2px;">
-                <span style="font-size: 12.5px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</span>
-                <span style="font-size: 15px; font-weight: 700; color: #a78bfa;">{stats_weekly['pct_within_move']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_weekly['cnt_within_move']:,})</span></span>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px;">
-                <span style="font-size: 12.5px; color: #94a3b8;">Total High-Low Range &le; {target_pct:.2f}%:</span>
-                <span style="font-size: 15px; font-weight: 700; color: #00d26a;">{stats_weekly['pct_within_range']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_weekly['cnt_within_range']:,})</span></span>
-            </div>
-            
-            <hr style="margin: 8px 0; border-color: #1e293b;">
-            <div style="font-size: 12.5px; font-weight: 700; color: #00d26a; margin-bottom: 2px;">🟢 Upside Stretch & Close (+{target_pct:.2f}%):</div>
-            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
-                • High Touched/Crossed &ge; +{target_pct:.2f}%: <strong style="color: #00d26a;">{stats_weekly['pct_high_breach_pos']:.1f}%</strong> ({stats_weekly['cnt_high_breach_pos']:,} periods)<br>
-                • Closed ABOVE +{target_pct:.2f}% (Breakout): <strong style="color: #38bdf8;">{stats_weekly['pct_above_pos']:.1f}%</strong> ({stats_weekly['cnt_above_pos']:,} periods)<br>
-                • Closed BELOW +{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_weekly['pct_close_below_pos']:.1f}%</strong> ({stats_weekly['cnt_close_below_pos']:,} periods)
-            </div>
-            
-            <hr style="margin: 8px 0; border-color: #1e293b;">
-            <div style="font-size: 12.5px; font-weight: 700; color: #f87171; margin-bottom: 2px;">🔴 Downside Drop & Close (-{target_pct:.2f}%):</div>
-            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
-                • Low Touched/Crossed &le; -{target_pct:.2f}%: <strong style="color: #f87171;">{stats_weekly['pct_low_breach_neg']:.1f}%</strong> ({stats_weekly['cnt_low_breach_neg']:,} periods)<br>
-                • Closed BELOW -{target_pct:.2f}% (Breakdown): <strong style="color: #f8312f;">{stats_weekly['pct_below_neg']:.1f}%</strong> ({stats_weekly['cnt_below_neg']:,} periods)<br>
-                • Closed ABOVE -{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_weekly['pct_close_above_neg']:.1f}%</strong> ({stats_weekly['cnt_close_above_neg']:,} periods)
-            </div>
-            
-            <hr style="margin: 8px 0; border-color: #1e293b;">
-            <div style="font-size: 12px; color: #94a3b8;">
-                Average Weekly Range: <strong style="color: #f8fafc;">{stats_weekly['avg_range_pct']:.2f}%</strong> (Median: {stats_weekly['median_range_pct']:.2f}%)
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(_build_metric_card(
+            w_title,
+            "#a78bfa",
+            stats_weekly,
+            target_pct,
+            "periods"
+        ), unsafe_allow_html=True)
         
     with col_m:
         m_title = f"🗓️ MONTHLY - Expiry ({stats_monthly['total_periods']:,} Months)" if is_expiry_mode else f"🗓️ MONTHLY ({stats_monthly['total_periods']:,} Months)"
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-label" style="font-size: 14.5px; color: #f43f5e; font-weight: 700;">{m_title}</div>
-            <hr style="margin: 6px 0; border-color: #232f48;">
-            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 2px;">
-                <span style="font-size: 12.5px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</span>
-                <span style="font-size: 15px; font-weight: 700; color: #f43f5e;">{stats_monthly['pct_within_move']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_monthly['cnt_within_move']:,})</span></span>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px;">
-                <span style="font-size: 12.5px; color: #94a3b8;">Total High-Low Range &le; {target_pct:.2f}%:</span>
-                <span style="font-size: 15px; font-weight: 700; color: #00d26a;">{stats_monthly['pct_within_range']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_monthly['cnt_within_range']:,})</span></span>
-            </div>
-            
-            <hr style="margin: 8px 0; border-color: #1e293b;">
-            <div style="font-size: 12.5px; font-weight: 700; color: #00d26a; margin-bottom: 2px;">🟢 Upside Stretch & Close (+{target_pct:.2f}%):</div>
-            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
-                • High Touched/Crossed &ge; +{target_pct:.2f}%: <strong style="color: #00d26a;">{stats_monthly['pct_high_breach_pos']:.1f}%</strong> ({stats_monthly['cnt_high_breach_pos']:,} months)<br>
-                • Closed ABOVE +{target_pct:.2f}% (Breakout): <strong style="color: #38bdf8;">{stats_monthly['pct_above_pos']:.1f}%</strong> ({stats_monthly['cnt_above_pos']:,} months)<br>
-                • Closed BELOW +{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_monthly['pct_close_below_pos']:.1f}%</strong> ({stats_monthly['cnt_close_below_pos']:,} months)
-            </div>
-            
-            <hr style="margin: 8px 0; border-color: #1e293b;">
-            <div style="font-size: 12.5px; font-weight: 700; color: #f87171; margin-bottom: 2px;">🔴 Downside Drop & Close (-{target_pct:.2f}%):</div>
-            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
-                • Low Touched/Crossed &le; -{target_pct:.2f}%: <strong style="color: #f87171;">{stats_monthly['pct_low_breach_neg']:.1f}%</strong> ({stats_monthly['cnt_low_breach_neg']:,} months)<br>
-                • Closed BELOW -{target_pct:.2f}% (Breakdown): <strong style="color: #f8312f;">{stats_monthly['pct_below_neg']:.1f}%</strong> ({stats_monthly['cnt_below_neg']:,} months)<br>
-                • Closed ABOVE -{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_monthly['pct_close_above_neg']:.1f}%</strong> ({stats_monthly['cnt_close_above_neg']:,} months)
-            </div>
-            
-            <hr style="margin: 8px 0; border-color: #1e293b;">
-            <div style="font-size: 12px; color: #94a3b8;">
-                Average Monthly Range: <strong style="color: #f8fafc;">{stats_monthly['avg_range_pct']:.2f}%</strong> (Median: {stats_monthly['median_range_pct']:.2f}%)
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(_build_metric_card(
+            m_title,
+            "#f43f5e",
+            stats_monthly,
+            target_pct,
+            "months"
+        ), unsafe_allow_html=True)
         
     # Unified Comparative Summary Table
     tf_w_name = f"Weekly ({stats_weekly['period_label']})" if is_expiry_mode else "Weekly"
