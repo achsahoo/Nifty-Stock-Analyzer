@@ -273,6 +273,27 @@ class NiftyAnalyticsEngine:
         pct_below_neg = below_neg.mean() * 100.0
         cnt_below_neg = int(below_neg.sum())
         
+        # High / Low Breach relative to open
+        high_move = (df['high'] - df['open']) / df['open'] * 100.0
+        low_move = (df['low'] - df['open']) / df['open'] * 100.0
+        
+        high_breach_pos = (high_move >= threshold_pct)
+        pct_high_breach_pos = high_breach_pos.mean() * 100.0
+        cnt_high_breach_pos = int(high_breach_pos.sum())
+        
+        low_breach_neg = (low_move <= -threshold_pct)
+        pct_low_breach_neg = low_breach_neg.mean() * 100.0
+        cnt_low_breach_neg = int(low_breach_neg.sum())
+        
+        # Close below +T% and Close above -T%
+        close_below_pos = (df['move_pct'] <= threshold_pct)
+        pct_close_below_pos = close_below_pos.mean() * 100.0
+        cnt_close_below_pos = int(close_below_pos.sum())
+        
+        close_above_neg = (df['move_pct'] >= -threshold_pct)
+        pct_close_above_neg = close_above_neg.mean() * 100.0
+        cnt_close_above_neg = int(close_above_neg.sum())
+        
         stats = {
             'timeframe': timeframe,
             'period_label': period_label,
@@ -292,6 +313,16 @@ class NiftyAnalyticsEngine:
             'cnt_above_pos': cnt_above_pos,
             'pct_below_neg': pct_below_neg,
             'cnt_below_neg': cnt_below_neg,
+            # High / Low Breach
+            'pct_high_breach_pos': pct_high_breach_pos,
+            'cnt_high_breach_pos': cnt_high_breach_pos,
+            'pct_low_breach_neg': pct_low_breach_neg,
+            'cnt_low_breach_neg': cnt_low_breach_neg,
+            # Directional Close Containment
+            'pct_close_below_pos': pct_close_below_pos,
+            'cnt_close_below_pos': cnt_close_below_pos,
+            'pct_close_above_neg': pct_close_above_neg,
+            'cnt_close_above_neg': cnt_close_above_neg,
             'avg_move_pct': df['move_pct'].mean(),
             'median_move_pct': df['move_pct'].median(),
             'df': df

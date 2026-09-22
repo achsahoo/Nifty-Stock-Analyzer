@@ -210,17 +210,35 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
         with q_cols[i]:
             st.button(f"{p_val:.2f}% Range", key=f"s1_p_{p_val}", on_click=set_stat_thresh, args=(p_val,), width="stretch")
             
-    c_in1, c_in2 = st.columns([1.5, 2.5])
-    with c_in1:
-        target_pct = st.number_input("Target Move Range Threshold (%):", min_value=0.10, max_value=10.0,
-                                     value=float(st.session_state.stat_thresh_pct), step=0.10, format="%.2f")
-        st.session_state.stat_thresh_pct = target_pct
-    with c_in2:
-        target_pct_slider = st.slider("Adjust Range Slider (%):", min_value=0.25, max_value=5.0,
-                                      value=float(st.session_state.stat_thresh_pct), step=0.05)
-        if target_pct_slider != st.session_state.stat_thresh_pct:
-            st.session_state.stat_thresh_pct = target_pct_slider
-            target_pct = target_pct_slider
+    def _change_stat_thresh(delta):
+        cur = float(st.session_state.get('stat_thresh_pct', 1.00))
+        new_v = round(cur + delta, 2)
+        st.session_state.stat_thresh_pct = max(0.10, min(10.00, new_v))
+
+    st.markdown(f"""
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; margin-bottom: 2px;">
+        <span style="font-weight: 600; color: #f1f5f9; font-size: 13.5px;">🎯 Selected Move & Range Threshold (% from Open):</span>
+        <span style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-weight: 700; font-size: 14px; padding: 2px 10px; border-radius: 6px;">
+            &plusmn;{st.session_state.stat_thresh_pct:.2f}%
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    c_dec, c_slider, c_inc = st.columns([0.6, 8.8, 0.6], vertical_alignment="center")
+    with c_dec:
+        st.button("➖", key="btn_dec_s1", on_click=_change_stat_thresh, args=(-0.10,), help="Decrease threshold by 0.10%", width="stretch")
+    with c_slider:
+        target_pct = st.slider(
+            "Target Move Range Threshold (%):",
+            min_value=0.10,
+            max_value=10.00,
+            step=0.05,
+            key="stat_thresh_pct",
+            label_visibility="collapsed",
+            help="Select the benchmark percentage threshold for move and range evaluation"
+        )
+    with c_inc:
+        st.button("➕", key="btn_inc_s1", on_click=_change_stat_thresh, args=(0.10,), help="Increase threshold by 0.10%", width="stretch")
 
     # Close Aggregation Mode Selector (TradingView Close vs Expiry Close)
     st.markdown("---")
@@ -287,16 +305,36 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
     with col_d:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-label" style="font-size: 14px; color: #38bdf8;">📅 DAILY ({stats_daily['total_periods']:,} Days)</div>
+            <div class="metric-label" style="font-size: 14.5px; color: #38bdf8; font-weight: 700;">📅 DAILY ({stats_daily['total_periods']:,} Days)</div>
             <hr style="margin: 6px 0; border-color: #232f48;">
-            <div style="font-size: 13px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</div>
-            <div class="metric-value" style="color: #38bdf8;">{stats_daily['pct_within_move']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_daily['cnt_within_move']:,} days)</span></div>
-            <div style="font-size: 13px; color: #94a3b8; margin-top: 6px;">Total High-Low Range &le; {target_pct:.2f}%:</div>
-            <div class="metric-value" style="color: #00d26a;">{stats_daily['pct_within_range']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_daily['cnt_within_range']:,} days)</span></div>
-            <div style="font-size: 12px; color: #cbd5e1; margin-top: 8px; line-height: 1.6;">
-                • Bullish Breakout (> +{target_pct:.2f}%): <strong>{stats_daily['pct_above_pos']:.1f}%</strong> ({stats_daily['cnt_above_pos']:,} days)<br>
-                • Bearish Breakdown (< -{target_pct:.2f}%): <strong>{stats_daily['pct_below_neg']:.1f}%</strong> ({stats_daily['cnt_below_neg']:,} days)<br>
-                • Average Daily Range: <strong>{stats_daily['avg_range_pct']:.2f}%</strong> (Median: {stats_daily['median_range_pct']:.2f}%)
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 2px;">
+                <span style="font-size: 12.5px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</span>
+                <span style="font-size: 15px; font-weight: 700; color: #38bdf8;">{stats_daily['pct_within_move']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_daily['cnt_within_move']:,})</span></span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px;">
+                <span style="font-size: 12.5px; color: #94a3b8;">Total High-Low Range &le; {target_pct:.2f}%:</span>
+                <span style="font-size: 15px; font-weight: 700; color: #00d26a;">{stats_daily['pct_within_range']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_daily['cnt_within_range']:,})</span></span>
+            </div>
+            
+            <hr style="margin: 8px 0; border-color: #1e293b;">
+            <div style="font-size: 12.5px; font-weight: 700; color: #00d26a; margin-bottom: 2px;">🟢 Upside Stretch & Close (+{target_pct:.2f}%):</div>
+            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
+                • High Touched/Crossed &ge; +{target_pct:.2f}%: <strong style="color: #00d26a;">{stats_daily['pct_high_breach_pos']:.1f}%</strong> ({stats_daily['cnt_high_breach_pos']:,} days)<br>
+                • Closed ABOVE +{target_pct:.2f}% (Breakout): <strong style="color: #38bdf8;">{stats_daily['pct_above_pos']:.1f}%</strong> ({stats_daily['cnt_above_pos']:,} days)<br>
+                • Closed BELOW +{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_daily['pct_close_below_pos']:.1f}%</strong> ({stats_daily['cnt_close_below_pos']:,} days)
+            </div>
+            
+            <hr style="margin: 8px 0; border-color: #1e293b;">
+            <div style="font-size: 12.5px; font-weight: 700; color: #f87171; margin-bottom: 2px;">🔴 Downside Drop & Close (-{target_pct:.2f}%):</div>
+            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
+                • Low Touched/Crossed &le; -{target_pct:.2f}%: <strong style="color: #f87171;">{stats_daily['pct_low_breach_neg']:.1f}%</strong> ({stats_daily['cnt_low_breach_neg']:,} days)<br>
+                • Closed BELOW -{target_pct:.2f}% (Breakdown): <strong style="color: #f8312f;">{stats_daily['pct_below_neg']:.1f}%</strong> ({stats_daily['cnt_below_neg']:,} days)<br>
+                • Closed ABOVE -{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_daily['pct_close_above_neg']:.1f}%</strong> ({stats_daily['cnt_close_above_neg']:,} days)
+            </div>
+            
+            <hr style="margin: 8px 0; border-color: #1e293b;">
+            <div style="font-size: 12px; color: #94a3b8;">
+                Average Daily Range: <strong style="color: #f8fafc;">{stats_daily['avg_range_pct']:.2f}%</strong> (Median: {stats_daily['median_range_pct']:.2f}%)
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -305,16 +343,36 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
         w_title = f"📆 WEEKLY - {stats_weekly['period_label']} ({stats_weekly['total_periods']:,})" if is_expiry_mode else f"📆 WEEKLY ({stats_weekly['total_periods']:,} Weeks)"
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-label" style="font-size: 14px; color: #a78bfa;">{w_title}</div>
+            <div class="metric-label" style="font-size: 14.5px; color: #a78bfa; font-weight: 700;">{w_title}</div>
             <hr style="margin: 6px 0; border-color: #232f48;">
-            <div style="font-size: 13px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</div>
-            <div class="metric-value" style="color: #a78bfa;">{stats_weekly['pct_within_move']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_weekly['cnt_within_move']:,} periods)</span></div>
-            <div style="font-size: 13px; color: #94a3b8; margin-top: 6px;">Total High-Low Range &le; {target_pct:.2f}%:</div>
-            <div class="metric-value" style="color: #00d26a;">{stats_weekly['pct_within_range']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_weekly['cnt_within_range']:,} periods)</span></div>
-            <div style="font-size: 12px; color: #cbd5e1; margin-top: 8px; line-height: 1.6;">
-                • Bullish Breakout (> +{target_pct:.2f}%): <strong>{stats_weekly['pct_above_pos']:.1f}%</strong> ({stats_weekly['cnt_above_pos']:,} periods)<br>
-                • Bearish Breakdown (< -{target_pct:.2f}%): <strong>{stats_weekly['pct_below_neg']:.1f}%</strong> ({stats_weekly['cnt_below_neg']:,} periods)<br>
-                • Average Weekly Range: <strong>{stats_weekly['avg_range_pct']:.2f}%</strong> (Median: {stats_weekly['median_range_pct']:.2f}%)
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 2px;">
+                <span style="font-size: 12.5px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</span>
+                <span style="font-size: 15px; font-weight: 700; color: #a78bfa;">{stats_weekly['pct_within_move']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_weekly['cnt_within_move']:,})</span></span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px;">
+                <span style="font-size: 12.5px; color: #94a3b8;">Total High-Low Range &le; {target_pct:.2f}%:</span>
+                <span style="font-size: 15px; font-weight: 700; color: #00d26a;">{stats_weekly['pct_within_range']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_weekly['cnt_within_range']:,})</span></span>
+            </div>
+            
+            <hr style="margin: 8px 0; border-color: #1e293b;">
+            <div style="font-size: 12.5px; font-weight: 700; color: #00d26a; margin-bottom: 2px;">🟢 Upside Stretch & Close (+{target_pct:.2f}%):</div>
+            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
+                • High Touched/Crossed &ge; +{target_pct:.2f}%: <strong style="color: #00d26a;">{stats_weekly['pct_high_breach_pos']:.1f}%</strong> ({stats_weekly['cnt_high_breach_pos']:,} periods)<br>
+                • Closed ABOVE +{target_pct:.2f}% (Breakout): <strong style="color: #38bdf8;">{stats_weekly['pct_above_pos']:.1f}%</strong> ({stats_weekly['cnt_above_pos']:,} periods)<br>
+                • Closed BELOW +{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_weekly['pct_close_below_pos']:.1f}%</strong> ({stats_weekly['cnt_close_below_pos']:,} periods)
+            </div>
+            
+            <hr style="margin: 8px 0; border-color: #1e293b;">
+            <div style="font-size: 12.5px; font-weight: 700; color: #f87171; margin-bottom: 2px;">🔴 Downside Drop & Close (-{target_pct:.2f}%):</div>
+            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
+                • Low Touched/Crossed &le; -{target_pct:.2f}%: <strong style="color: #f87171;">{stats_weekly['pct_low_breach_neg']:.1f}%</strong> ({stats_weekly['cnt_low_breach_neg']:,} periods)<br>
+                • Closed BELOW -{target_pct:.2f}% (Breakdown): <strong style="color: #f8312f;">{stats_weekly['pct_below_neg']:.1f}%</strong> ({stats_weekly['cnt_below_neg']:,} periods)<br>
+                • Closed ABOVE -{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_weekly['pct_close_above_neg']:.1f}%</strong> ({stats_weekly['cnt_close_above_neg']:,} periods)
+            </div>
+            
+            <hr style="margin: 8px 0; border-color: #1e293b;">
+            <div style="font-size: 12px; color: #94a3b8;">
+                Average Weekly Range: <strong style="color: #f8fafc;">{stats_weekly['avg_range_pct']:.2f}%</strong> (Median: {stats_weekly['median_range_pct']:.2f}%)
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -323,16 +381,36 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
         m_title = f"🗓️ MONTHLY - Expiry ({stats_monthly['total_periods']:,} Months)" if is_expiry_mode else f"🗓️ MONTHLY ({stats_monthly['total_periods']:,} Months)"
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-label" style="font-size: 14px; color: #f43f5e;">{m_title}</div>
+            <div class="metric-label" style="font-size: 14.5px; color: #f43f5e; font-weight: 700;">{m_title}</div>
             <hr style="margin: 6px 0; border-color: #232f48;">
-            <div style="font-size: 13px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</div>
-            <div class="metric-value" style="color: #f43f5e;">{stats_monthly['pct_within_move']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_monthly['cnt_within_move']:,} months)</span></div>
-            <div style="font-size: 13px; color: #94a3b8; margin-top: 6px;">Total High-Low Range &le; {target_pct:.2f}%:</div>
-            <div class="metric-value" style="color: #00d26a;">{stats_monthly['pct_within_range']:.1f}% <span style="font-size: 13px; color: #94a3b8;">({stats_monthly['cnt_within_range']:,} months)</span></div>
-            <div style="font-size: 12px; color: #cbd5e1; margin-top: 8px; line-height: 1.6;">
-                • Bullish Breakout (> +{target_pct:.2f}%): <strong>{stats_monthly['pct_above_pos']:.1f}%</strong> ({stats_monthly['cnt_above_pos']:,} months)<br>
-                • Bearish Breakdown (< -{target_pct:.2f}%): <strong>{stats_monthly['pct_below_neg']:.1f}%</strong> ({stats_monthly['cnt_below_neg']:,} months)<br>
-                • Average Monthly Range: <strong>{stats_monthly['avg_range_pct']:.2f}%</strong> (Median: {stats_monthly['median_range_pct']:.2f}%)
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 2px;">
+                <span style="font-size: 12.5px; color: #94a3b8;">Close Move within &plusmn;{target_pct:.2f}%:</span>
+                <span style="font-size: 15px; font-weight: 700; color: #f43f5e;">{stats_monthly['pct_within_move']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_monthly['cnt_within_move']:,})</span></span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px;">
+                <span style="font-size: 12.5px; color: #94a3b8;">Total High-Low Range &le; {target_pct:.2f}%:</span>
+                <span style="font-size: 15px; font-weight: 700; color: #00d26a;">{stats_monthly['pct_within_range']:.1f}% <span style="font-size: 11.5px; color: #94a3b8; font-weight: normal;">({stats_monthly['cnt_within_range']:,})</span></span>
+            </div>
+            
+            <hr style="margin: 8px 0; border-color: #1e293b;">
+            <div style="font-size: 12.5px; font-weight: 700; color: #00d26a; margin-bottom: 2px;">🟢 Upside Stretch & Close (+{target_pct:.2f}%):</div>
+            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
+                • High Touched/Crossed &ge; +{target_pct:.2f}%: <strong style="color: #00d26a;">{stats_monthly['pct_high_breach_pos']:.1f}%</strong> ({stats_monthly['cnt_high_breach_pos']:,} months)<br>
+                • Closed ABOVE +{target_pct:.2f}% (Breakout): <strong style="color: #38bdf8;">{stats_monthly['pct_above_pos']:.1f}%</strong> ({stats_monthly['cnt_above_pos']:,} months)<br>
+                • Closed BELOW +{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_monthly['pct_close_below_pos']:.1f}%</strong> ({stats_monthly['cnt_close_below_pos']:,} months)
+            </div>
+            
+            <hr style="margin: 8px 0; border-color: #1e293b;">
+            <div style="font-size: 12.5px; font-weight: 700; color: #f87171; margin-bottom: 2px;">🔴 Downside Drop & Close (-{target_pct:.2f}%):</div>
+            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.6; margin-left: 4px;">
+                • Low Touched/Crossed &le; -{target_pct:.2f}%: <strong style="color: #f87171;">{stats_monthly['pct_low_breach_neg']:.1f}%</strong> ({stats_monthly['cnt_low_breach_neg']:,} months)<br>
+                • Closed BELOW -{target_pct:.2f}% (Breakdown): <strong style="color: #f8312f;">{stats_monthly['pct_below_neg']:.1f}%</strong> ({stats_monthly['cnt_below_neg']:,} months)<br>
+                • Closed ABOVE -{target_pct:.2f}%: <strong style="color: #f1f5f9;">{stats_monthly['pct_close_above_neg']:.1f}%</strong> ({stats_monthly['cnt_close_above_neg']:,} months)
+            </div>
+            
+            <hr style="margin: 8px 0; border-color: #1e293b;">
+            <div style="font-size: 12px; color: #94a3b8;">
+                Average Monthly Range: <strong style="color: #f8fafc;">{stats_monthly['avg_range_pct']:.2f}%</strong> (Median: {stats_monthly['median_range_pct']:.2f}%)
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -344,30 +422,42 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
         {
             "Timeframe": "Daily",
             "Total Periods": stats_daily['total_periods'],
-            f"Within ±{target_pct:.2f}% Move (%)": f"{stats_daily['pct_within_move']:.1f}% ({stats_daily['cnt_within_move']:,})",
-            f"High-Low Range ≤ {target_pct:.2f}% (%)": f"{stats_daily['pct_within_range']:.1f}% ({stats_daily['cnt_within_range']:,})",
-            f"Bullish (> +{target_pct:.2f}%)": f"{stats_daily['pct_above_pos']:.1f}% ({stats_daily['cnt_above_pos']:,})",
-            f"Bearish (< -{target_pct:.2f}%)": f"{stats_daily['pct_below_neg']:.1f}% ({stats_daily['cnt_below_neg']:,})",
+            f"High Touched ≥ +{target_pct:.2f}%": f"{stats_daily['pct_high_breach_pos']:.1f}% ({stats_daily['cnt_high_breach_pos']:,})",
+            f"Close Above +{target_pct:.2f}% (Bullish)": f"{stats_daily['pct_above_pos']:.1f}% ({stats_daily['cnt_above_pos']:,})",
+            f"Close Below +{target_pct:.2f}%": f"{stats_daily['pct_close_below_pos']:.1f}% ({stats_daily['cnt_close_below_pos']:,})",
+            f"Low Touched ≤ -{target_pct:.2f}%": f"{stats_daily['pct_low_breach_neg']:.1f}% ({stats_daily['cnt_low_breach_neg']:,})",
+            f"Close Below -{target_pct:.2f}% (Bearish)": f"{stats_daily['pct_below_neg']:.1f}% ({stats_daily['cnt_below_neg']:,})",
+            f"Close Above -{target_pct:.2f}%": f"{stats_daily['pct_close_above_neg']:.1f}% ({stats_daily['cnt_close_above_neg']:,})",
+            f"Within ±{target_pct:.2f}% Move": f"{stats_daily['pct_within_move']:.1f}% ({stats_daily['cnt_within_move']:,})",
+            f"Range ≤ {target_pct:.2f}%": f"{stats_daily['pct_within_range']:.1f}% ({stats_daily['cnt_within_range']:,})",
             "Avg Range (%)": f"{stats_daily['avg_range_pct']:.2f}%",
             "Median Range (%)": f"{stats_daily['median_range_pct']:.2f}%"
         },
         {
             "Timeframe": tf_w_name,
             "Total Periods": stats_weekly['total_periods'],
-            f"Within ±{target_pct:.2f}% Move (%)": f"{stats_weekly['pct_within_move']:.1f}% ({stats_weekly['cnt_within_move']:,})",
-            f"High-Low Range ≤ {target_pct:.2f}% (%)": f"{stats_weekly['pct_within_range']:.1f}% ({stats_weekly['cnt_within_range']:,})",
-            f"Bullish (> +{target_pct:.2f}%)": f"{stats_weekly['pct_above_pos']:.1f}% ({stats_weekly['cnt_above_pos']:,})",
-            f"Bearish (< -{target_pct:.2f}%)": f"{stats_weekly['pct_below_neg']:.1f}% ({stats_weekly['cnt_below_neg']:,})",
+            f"High Touched ≥ +{target_pct:.2f}%": f"{stats_weekly['pct_high_breach_pos']:.1f}% ({stats_weekly['cnt_high_breach_pos']:,})",
+            f"Close Above +{target_pct:.2f}% (Bullish)": f"{stats_weekly['pct_above_pos']:.1f}% ({stats_weekly['cnt_above_pos']:,})",
+            f"Close Below +{target_pct:.2f}%": f"{stats_weekly['pct_close_below_pos']:.1f}% ({stats_weekly['cnt_close_below_pos']:,})",
+            f"Low Touched ≤ -{target_pct:.2f}%": f"{stats_weekly['pct_low_breach_neg']:.1f}% ({stats_weekly['cnt_low_breach_neg']:,})",
+            f"Close Below -{target_pct:.2f}% (Bearish)": f"{stats_weekly['pct_below_neg']:.1f}% ({stats_weekly['cnt_below_neg']:,})",
+            f"Close Above -{target_pct:.2f}%": f"{stats_weekly['pct_close_above_neg']:.1f}% ({stats_weekly['cnt_close_above_neg']:,})",
+            f"Within ±{target_pct:.2f}% Move": f"{stats_weekly['pct_within_move']:.1f}% ({stats_weekly['cnt_within_move']:,})",
+            f"Range ≤ {target_pct:.2f}%": f"{stats_weekly['pct_within_range']:.1f}% ({stats_weekly['cnt_within_range']:,})",
             "Avg Range (%)": f"{stats_weekly['avg_range_pct']:.2f}%",
             "Median Range (%)": f"{stats_weekly['median_range_pct']:.2f}%"
         },
         {
             "Timeframe": tf_m_name,
             "Total Periods": stats_monthly['total_periods'],
-            f"Within ±{target_pct:.2f}% Move (%)": f"{stats_monthly['pct_within_move']:.1f}% ({stats_monthly['cnt_within_move']:,})",
-            f"High-Low Range ≤ {target_pct:.2f}% (%)": f"{stats_monthly['pct_within_range']:.1f}% ({stats_monthly['cnt_within_range']:,})",
-            f"Bullish (> +{target_pct:.2f}%)": f"{stats_monthly['pct_above_pos']:.1f}% ({stats_monthly['cnt_above_pos']:,})",
-            f"Bearish (< -{target_pct:.2f}%)": f"{stats_monthly['pct_below_neg']:.1f}% ({stats_monthly['cnt_below_neg']:,})",
+            f"High Touched ≥ +{target_pct:.2f}%": f"{stats_monthly['pct_high_breach_pos']:.1f}% ({stats_monthly['cnt_high_breach_pos']:,})",
+            f"Close Above +{target_pct:.2f}% (Bullish)": f"{stats_monthly['pct_above_pos']:.1f}% ({stats_monthly['cnt_above_pos']:,})",
+            f"Close Below +{target_pct:.2f}%": f"{stats_monthly['pct_close_below_pos']:.1f}% ({stats_monthly['cnt_close_below_pos']:,})",
+            f"Low Touched ≤ -{target_pct:.2f}%": f"{stats_monthly['pct_low_breach_neg']:.1f}% ({stats_monthly['cnt_low_breach_neg']:,})",
+            f"Close Below -{target_pct:.2f}% (Bearish)": f"{stats_monthly['pct_below_neg']:.1f}% ({stats_monthly['cnt_below_neg']:,})",
+            f"Close Above -{target_pct:.2f}%": f"{stats_monthly['pct_close_above_neg']:.1f}% ({stats_monthly['cnt_close_above_neg']:,})",
+            f"Within ±{target_pct:.2f}% Move": f"{stats_monthly['pct_within_move']:.1f}% ({stats_monthly['cnt_within_move']:,})",
+            f"Range ≤ {target_pct:.2f}%": f"{stats_monthly['pct_within_range']:.1f}% ({stats_monthly['cnt_within_range']:,})",
             "Avg Range (%)": f"{stats_monthly['avg_range_pct']:.2f}%",
             "Median Range (%)": f"{stats_monthly['median_range_pct']:.2f}%"
         }
