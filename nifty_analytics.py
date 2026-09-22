@@ -298,21 +298,65 @@ class NiftyAnalyticsEngine:
         }
         return stats
 
-    def _get_period_groups(self, timeframe="Daily"):
-        self.load_data()
-        col = {"Daily": "day", "Weekly": "week", "Monthly": "month"}.get(timeframe, "day")
-        if col not in self._grouped_cache:
-            df_raw = self._df_raw
-            period_opens = df_raw.group_by(col).agg(pl.col("open").first().alias("period_open"))
-            df_joined = df_raw.join(period_opens, on=col).with_columns([
-                ((pl.col("high") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_high_pct"),
-                ((pl.col("low") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_low_pct"),
-                ((pl.col("close") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_close_pct")
-            ]).to_pandas()
-            self._grouped_cache[col] = [group for _, group in df_joined.groupby(col)]
-        return self._grouped_cache[col]
+    def _build_minute_expiry_groups(self, meta, start_date=None):
+        df_sub = self._df_raw
+        if start_date:
+            start_ts = np.datetime64(str(start_date) + 'T00:00:00', 'ns')
+            df_sub = df_sub.filter(pl.col('date') >= start_ts)
+            
+        exp_ts = np.array([np.datetime64(str(m['actual_date']) + 'T23:59:59', 'ns') for m in meta])
+        dt_arr = df_sub['date'].to_numpy()
+        indices = np.searchsorted(exp_ts, dt_arr)
+        valid_mask = indices < len(exp_ts)
+        
+        df_sub = df_sub.filter(pl.Series(valid_mask)).with_columns(pl.Series('cycle_id', indices[valid_mask]))
+        period_opens = df_sub.group_by('cycle_id').agg(pl.col('open').first().alias('period_open'))
+        df_joined = df_sub.join(period_opens, on='cycle_id').with_columns([
+            ((pl.col('high') - pl.col('period_open')) / pl.col('period_open') * 100.0).alias('move_high_pct'),
+            ((pl.col('low') - pl.col('period_open')) / pl.col('period_open') * 100.0).alias('move_low_pct'),
+            ((pl.col('close') - pl.col('period_open')) / pl.col('period_open') * 100.0).alias('move_close_pct')
+        ]).to_pandas()
+        
+        return [group for _, group in df_joined.groupby('cycle_id', sort=True)]
 
-    def get_stretch_reversal_stats(self, timeframe="Daily", stretch_threshold=None, retrace_pct=50.0, ext_steps=None):
+    def _get_period_groups(self, timeframe="Daily", close_type="TradingView", weekly_scope="Official"):
+        self.load_data()
+        is_expiry = ("expiry" in str(close_type).lower())
+        
+        if timeframe == "Daily" or not is_expiry:
+            col = {"Daily": "day", "Weekly": "week", "Monthly": "month"}.get(timeframe, "day")
+            cache_key = col
+            if cache_key not in self._grouped_cache:
+                df_raw = self._df_raw
+                period_opens = df_raw.group_by(col).agg(pl.col("open").first().alias("period_open"))
+                df_joined = df_raw.join(period_opens, on=col).with_columns([
+                    ((pl.col("high") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_high_pct"),
+                    ((pl.col("low") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_low_pct"),
+                    ((pl.col("close") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_close_pct")
+                ]).to_pandas()
+                self._grouped_cache[cache_key] = [group for _, group in df_joined.groupby(col, sort=True)]
+            return self._grouped_cache[cache_key]
+        else:
+            if timeframe == "Weekly":
+                is_full = ("full" in str(weekly_scope).lower() or "extended" in str(weekly_scope).lower())
+                cache_key = "weekly_expiry_full" if is_full else "weekly_expiry_official"
+                if cache_key not in self._grouped_cache:
+                    if is_full:
+                        self._grouped_cache[cache_key] = self._build_minute_expiry_groups(self._weekly_expiries_full_meta)
+                    else:
+                        self._grouped_cache[cache_key] = self._build_minute_expiry_groups(
+                            self._weekly_expiries_official_meta, start_date=datetime.date(2019, 2, 11)
+                        )
+                return self._grouped_cache[cache_key]
+            elif timeframe == "Monthly":
+                cache_key = "monthly_expiry"
+                if cache_key not in self._grouped_cache:
+                    self._grouped_cache[cache_key] = self._build_minute_expiry_groups(self._monthly_expiries_meta)
+                return self._grouped_cache[cache_key]
+            else:
+                return self._get_period_groups("Daily", close_type="TradingView")
+
+    def get_stretch_reversal_stats(self, timeframe="Daily", stretch_threshold=None, retrace_pct=50.0, ext_steps=None, close_type="TradingView", weekly_scope="Official", *args, **kwargs):
         if stretch_threshold is None:
             stretch_threshold = 0.50 if timeframe == "Daily" else (1.50 if timeframe == "Weekly" else 3.00)
             
@@ -324,13 +368,21 @@ class NiftyAnalyticsEngine:
             else:
                 ext_steps = [1.00, 2.00, 3.00, 4.00]
                 
-        unit_singular, unit_plural = {
-            "Daily": ("Day", "Days"),
-            "Weekly": ("Week", "Weeks"),
-            "Monthly": ("Month", "Months")
-        }.get(timeframe, ("Period", "Periods"))
+        is_expiry = ("expiry" in str(close_type).lower())
+        if is_expiry:
+            unit_singular, unit_plural = {
+                "Daily": ("Day", "Days"),
+                "Weekly": ("Expiry Week", "Expiry Weeks"),
+                "Monthly": ("Expiry Month", "Expiry Months")
+            }.get(timeframe, ("Period", "Periods"))
+        else:
+            unit_singular, unit_plural = {
+                "Daily": ("Day", "Days"),
+                "Weekly": ("Week", "Weeks"),
+                "Monthly": ("Month", "Months")
+            }.get(timeframe, ("Period", "Periods"))
         
-        periods_grouped = self._get_period_groups(timeframe)
+        periods_grouped = self._get_period_groups(timeframe, close_type=close_type, weekly_scope=weekly_scope)
         total_periods = len(periods_grouped)
         
         # Upside (+X% from Open)
@@ -555,6 +607,9 @@ class NiftyAnalyticsEngine:
             'ext_steps': ext_steps,
             'pos_goal_level': pos_goal_level,
             'neg_goal_level': neg_goal_level,
+            'close_type': close_type,
+            'weekly_scope': weekly_scope,
+            'is_expiry': is_expiry,
             'pos': {
                 'count': pos_count,
                 'pct_of_all_days': (pos_count / total_periods * 100.0) if total_periods > 0 else 0,
@@ -671,5 +726,5 @@ class NiftyAnalyticsEngine:
             }
         }
 
-    def get_intraday_reversal_stats(self, stretch_threshold=0.50, retrace_pct=50.0, timeframe="Daily"):
-        return self.get_stretch_reversal_stats(timeframe=timeframe, stretch_threshold=stretch_threshold, retrace_pct=retrace_pct)
+    def get_intraday_reversal_stats(self, stretch_threshold=0.50, retrace_pct=50.0, timeframe="Daily", close_type="TradingView", weekly_scope="Official", *args, **kwargs):
+        return self.get_stretch_reversal_stats(timeframe=timeframe, stretch_threshold=stretch_threshold, retrace_pct=retrace_pct, close_type=close_type, weekly_scope=weekly_scope, *args, **kwargs)

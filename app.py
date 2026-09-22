@@ -480,11 +480,64 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
 </div>"""
     st.markdown(top_banner_html, unsafe_allow_html=True)
     
+    # Close Aggregation Mode Selector (TradingView Close vs Expiry Close)
+    c_mode1, c_mode2 = st.columns([1.8, 3.2])
+    with c_mode1:
+        sec2_close_type = st.radio(
+            "🎯 Candle Close Aggregation Mode:",
+            [
+                "📈 TradingView Close (Standard Calendar)",
+                "⚡ Expiry Close (NSE F&O Schedule)"
+            ],
+            index=0,
+            key="s2_close_type",
+            help="• TradingView Close: Standard calendar aggregation (Monday open to Friday close for Weekly, 1st to Month-end for Monthly).\n• Expiry Close: F&O contract settlement cycles (Thursdays up to Aug 2025, Tuesdays from Sept 2025 onwards). Preceding trading day is used on holidays."
+        )
+    with c_mode2:
+        is_expiry_mode = ("expiry" in str(sec2_close_type).lower())
+        if is_expiry_mode:
+            st.markdown("""
+            <div style='background:rgba(56, 189, 248, 0.08); border-left: 3px solid #38bdf8; padding: 10px 14px; border-radius: 6px; font-size: 13px; color: #cbd5e1; margin-top: 4px;'>
+                <strong>⚡ NSE F&O Expiry Settlement Rules Active:</strong><br>
+                • <strong>Monthly Expiry:</strong> Last Thursday (up to Aug 31, 2025) ➔ Last Tuesday (from Sept 1, 2025 onwards).<br>
+                • <strong>Weekly Expiry:</strong> Every Thursday (up to Aug 31, 2025) ➔ Every Tuesday (from Sept 1, 2025 onwards).<br>
+                • <strong>Holiday Shift Rule:</strong> If expiry day is an exchange holiday, settlement shifts to the preceding trading day (e.g. Wednesday or Monday/Friday). Next cycle opens immediately on the next trading session.
+            </div>
+            """, unsafe_allow_html=True)
+            sec2_weekly_scope_choice = st.radio(
+                "🗓️ Weekly Expiry Contract Scope:",
+                [
+                    "🎯 Official F&O Weekly Era (Feb 2019 – Present: ~397 Weeks)",
+                    "🕰️ Extended History (Synthetic Thursday 2015 – 2019: ~610 Weeks)"
+                ],
+                index=0,
+                key="s2_weekly_scope",
+                horizontal=True,
+                help="• Official F&O Weekly Era: Matches NSE regulatory history (weekly options officially launched on Feb 11, 2019).\n• Extended History: Evaluates Thursday-to-Thursday weekly cycles back to 2015 for longer historical backtesting."
+            )
+            sec2_weekly_scope = "Official" if "official" in sec2_weekly_scope_choice.lower() else "Full"
+        else:
+            sec2_weekly_scope = "Official"
+            st.caption("ℹ️ Standard TradingView weekly candles (Monday open to Friday close) and monthly candles (1st trading day to last trading day of the calendar month).")
+            
     # Multi-timeframe Quick Matrix Expander
     with st.expander("🌐 View Multi-Timeframe Stretch Summary Matrix (Daily vs Weekly vs Monthly)", expanded=False):
-        c_d = analytics_engine.get_stretch_reversal_stats("Daily", 0.50, 50.0)
-        c_w = analytics_engine.get_stretch_reversal_stats("Weekly", 1.50, 50.0)
-        c_m = analytics_engine.get_stretch_reversal_stats("Monthly", 3.00, 50.0)
+        try:
+            c_d = analytics_engine.get_stretch_reversal_stats("Daily", 0.50, 50.0, close_type=sec2_close_type, weekly_scope=sec2_weekly_scope)
+            c_w = analytics_engine.get_stretch_reversal_stats("Weekly", 1.50, 50.0, close_type=sec2_close_type, weekly_scope=sec2_weekly_scope)
+            c_m = analytics_engine.get_stretch_reversal_stats("Monthly", 3.00, 50.0, close_type=sec2_close_type, weekly_scope=sec2_weekly_scope)
+        except TypeError:
+            st.cache_resource.clear()
+            import nifty_analytics
+            nifty_analytics = importlib.reload(nifty_analytics)
+            analytics_engine = nifty_analytics.NiftyAnalyticsEngine()
+            analytics_engine.load_data()
+            c_d = analytics_engine.get_stretch_reversal_stats("Daily", 0.50, 50.0, close_type=sec2_close_type, weekly_scope=sec2_weekly_scope)
+            c_w = analytics_engine.get_stretch_reversal_stats("Weekly", 1.50, 50.0, close_type=sec2_close_type, weekly_scope=sec2_weekly_scope)
+            c_m = analytics_engine.get_stretch_reversal_stats("Monthly", 3.00, 50.0, close_type=sec2_close_type, weekly_scope=sec2_weekly_scope)
+        
+        w_tf_label = "📆 Weekly (Expiry Cycle)" if is_expiry_mode else "📆 Weekly"
+        m_tf_label = "🗓️ Monthly (Expiry Cycle)" if is_expiry_mode else "🗓️ Monthly"
         
         summary_comp_df = pd.DataFrame([
             {
@@ -499,8 +552,8 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
                 "Failed Reversal / Red (%)": f"{c_d['pos']['closed_red_pct']:.1f}%"
             },
             {
-                "Timeframe": "📆 Weekly",
-                "Total Periods": f"{c_w['total_periods']:,} Weeks",
+                "Timeframe": w_tf_label,
+                "Total Periods": f"{c_w['total_periods']:,} {c_w['unit_plural']}",
                 "Benchmark Stretch": "±1.50%",
                 "Bullish Triggered (%)": f"{c_w['pos']['pct_of_all_periods']:.1f}% ({c_w['pos']['count']:,})",
                 "Avg Peak High": f"+{c_w['pos']['avg_peak_high']:.2f}%",
@@ -510,8 +563,8 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
                 "Failed Reversal / Red (%)": f"{c_w['pos']['closed_red_pct']:.1f}%"
             },
             {
-                "Timeframe": "🗓️ Monthly",
-                "Total Periods": f"{c_m['total_periods']:,} Months",
+                "Timeframe": m_tf_label,
+                "Total Periods": f"{c_m['total_periods']:,} {c_m['unit_plural']}",
                 "Benchmark Stretch": "±3.00%",
                 "Bullish Triggered (%)": f"{c_m['pos']['pct_of_all_periods']:.1f}% ({c_m['pos']['count']:,})",
                 "Avg Peak High": f"+{c_m['pos']['avg_peak_high']:.2f}%",
@@ -524,18 +577,23 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         st.dataframe(summary_comp_df, hide_index=True, width="stretch")
     
     # Timeframe Selector
+    tf_radio_options = [
+        "📅 Daily (Intraday Stretch)",
+        "📆 Weekly (Expiry Cycle Stretch)" if is_expiry_mode else "📆 Weekly (Intraweek Stretch)",
+        "🗓️ Monthly (Expiry Cycle Stretch)" if is_expiry_mode else "🗓️ Monthly (Intramonth Stretch)"
+    ]
     sec2_tf_choice = st.radio(
         "Select Stretch Analysis Timeframe:",
-        ["📅 Daily (Intraday Stretch)", "📆 Weekly (Intraweek Stretch)", "🗓️ Monthly (Intramonth Stretch)"],
+        tf_radio_options,
         horizontal=True
     )
     
-    tf_map = {
-        "📅 Daily (Intraday Stretch)": "Daily",
-        "📆 Weekly (Intraweek Stretch)": "Weekly",
-        "🗓️ Monthly (Intramonth Stretch)": "Monthly"
-    }
-    selected_tf = tf_map[sec2_tf_choice]
+    if "Daily" in sec2_tf_choice:
+        selected_tf = "Daily"
+    elif "Weekly" in sec2_tf_choice:
+        selected_tf = "Weekly"
+    else:
+        selected_tf = "Monthly"
     
     # Timeframe-specific configurations
     if selected_tf == "Daily":
@@ -548,26 +606,48 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         tf_close_label = "Day Close at 15:30"
         rev_label_pos = "Closed RED (< 0.0%)"
         rev_label_neg = "Closed GREEN (> 0.0%)"
+        selected_tf_display = "Daily"
     elif selected_tf == "Weekly":
         presets = [1.00, 1.50, 2.00, 2.50, 3.00]
         default_stretch = 1.50
         s_min, s_max, s_step = 0.50, 5.00, 0.10
         ext_steps = [0.50, 1.00, 1.50, 2.00]
-        tf_desc = f"{total_weeks:,} calendar weeks ({min_year} – {max_year}), measured from Monday Open to Friday 15:30 Close"
-        tf_period_name = "weeks"
-        tf_close_label = "Friday Close at 15:30"
-        rev_label_pos = "Closed RED Week (< 0.0%)"
-        rev_label_neg = "Closed GREEN Week (> 0.0%)"
+        if is_expiry_mode:
+            tf_period_name = "expiry weeks"
+            total_exp_w = len(analytics_engine._weekly_expiry_full_df) if sec2_weekly_scope == "Full" else len(analytics_engine._weekly_expiry_official_df)
+            scope_desc = "2015 – Present" if sec2_weekly_scope == "Full" else "Feb 2019 – Present"
+            tf_desc = f"{total_exp_w:,} F&O weekly expiry cycles ({scope_desc}), measured from Post-Expiry Open (09:15) to Expiry 15:30 Close"
+            tf_close_label = "Thursday/Tuesday Expiry Close at 15:30"
+            rev_label_pos = "Closed RED Expiry Week (< 0.0%)"
+            rev_label_neg = "Closed GREEN Expiry Week (> 0.0%)"
+            selected_tf_display = "Expiry Week"
+        else:
+            tf_desc = f"{total_weeks:,} calendar weeks ({min_year} – {max_year}), measured from Monday Open to Friday 15:30 Close"
+            tf_period_name = "weeks"
+            tf_close_label = "Friday Close at 15:30"
+            rev_label_pos = "Closed RED Week (< 0.0%)"
+            rev_label_neg = "Closed GREEN Week (> 0.0%)"
+            selected_tf_display = "Weekly"
     else: # Monthly
         presets = [2.00, 3.00, 4.00, 5.00, 6.00]
         default_stretch = 3.00
         s_min, s_max, s_step = 1.00, 10.00, 0.25
         ext_steps = [1.00, 2.00, 3.00, 4.00]
-        tf_desc = f"{total_months:,} calendar months ({min_year} – {max_year}), measured from Month Open (1st trading minute) to Month-End Close"
-        tf_period_name = "months"
-        tf_close_label = "Month-End Close at 15:30"
-        rev_label_pos = "Closed RED Month (< 0.0%)"
-        rev_label_neg = "Closed GREEN Month (> 0.0%)"
+        if is_expiry_mode:
+            tf_period_name = "expiry months"
+            total_exp_m = len(analytics_engine._monthly_expiry_df)
+            tf_desc = f"{total_exp_m:,} F&O monthly expiry cycles (2015 – Present), measured from Post-Expiry Open (09:15) to Monthly Expiry 15:30 Close"
+            tf_close_label = "Last Thursday/Tuesday Expiry Close at 15:30"
+            rev_label_pos = "Closed RED Expiry Month (< 0.0%)"
+            rev_label_neg = "Closed GREEN Expiry Month (> 0.0%)"
+            selected_tf_display = "Expiry Month"
+        else:
+            tf_desc = f"{total_months:,} calendar months ({min_year} – {max_year}), measured from Month Open (1st trading minute) to Month-End Close"
+            tf_period_name = "months"
+            tf_close_label = "Month-End Close at 15:30"
+            rev_label_pos = "Closed RED Month (< 0.0%)"
+            rev_label_neg = "Closed GREEN Month (> 0.0%)"
+            selected_tf_display = "Monthly"
         
     session_key = f'sec2_thresh_{selected_tf}'
     if session_key not in st.session_state:
@@ -591,7 +671,7 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         st.session_state[r_k] = max(min_v, min(max_v, new_v))
 
     # Preset Buttons
-    st.markdown(f"**Quick {selected_tf} Stretch Presets:**")
+    st.markdown(f"**Quick {selected_tf_display} Stretch Presets:**")
     s_cols = st.columns(5)
     for i, p_val in enumerate(presets):
         with s_cols[i]:
@@ -602,7 +682,7 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
     with rc1:
         st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-            <span style="font-weight: 600; color: #f1f5f9; font-size: 13.5px;">{selected_tf} Stretch Threshold (% from Period Open):</span>
+            <span style="font-weight: 600; color: #f1f5f9; font-size: 13.5px;">{selected_tf_display} Stretch Threshold (% from Period Open):</span>
             <span style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-weight: 700; font-size: 13.5px; padding: 2px 8px; border-radius: 6px;">
                 &plusmn;{st.session_state[session_key]:.2f}%
             </span>
@@ -612,19 +692,19 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         c_dec, c_slider, c_inc = st.columns([1.1, 7.8, 1.1], vertical_alignment="center")
         with c_dec:
             st.button("➖", key=f"btn_dec_{selected_tf}", on_click=_change_thresh, args=(-s_step, session_key, s_min, s_max, s_step),
-                      help=f"Decrease {selected_tf.lower()} threshold by {s_step:.2f}%", width="stretch")
+                      help=f"Decrease {selected_tf_display.lower()} threshold by {s_step:.2f}%", width="stretch")
         with c_slider:
             stretch_thresh = st.slider(
-                f"{selected_tf} Stretch Threshold",
+                f"{selected_tf_display} Stretch Threshold",
                 min_value=s_min, max_value=s_max,
                 step=s_step,
                 key=session_key,
                 label_visibility="collapsed",
-                help=f"Trigger level from {selected_tf.lower()} open"
+                help=f"Trigger level from {selected_tf_display.lower()} open"
             )
         with c_inc:
             st.button("➕", key=f"btn_inc_{selected_tf}", on_click=_change_thresh, args=(s_step, session_key, s_min, s_max, s_step),
-                      help=f"Increase {selected_tf.lower()} threshold by {s_step:.2f}%", width="stretch")
+                      help=f"Increase {selected_tf_display.lower()} threshold by {s_step:.2f}%", width="stretch")
                       
     with rc2:
         st.markdown(f"""
@@ -652,7 +732,29 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
             st.button("➕", key="btn_inc_retrace", on_click=_change_retrace, args=(5.0, retrace_key, 20.0, 100.0, 5.0),
                       help="Increase retracement goal by 5%", width="stretch")
                                  
-    rev_stats = analytics_engine.get_stretch_reversal_stats(timeframe=selected_tf, stretch_threshold=stretch_thresh, retrace_pct=retrace_goal, ext_steps=ext_steps)
+    try:
+        rev_stats = analytics_engine.get_stretch_reversal_stats(
+            timeframe=selected_tf,
+            stretch_threshold=stretch_thresh,
+            retrace_pct=retrace_goal,
+            ext_steps=ext_steps,
+            close_type=sec2_close_type,
+            weekly_scope=sec2_weekly_scope
+        )
+    except TypeError:
+        st.cache_resource.clear()
+        import nifty_analytics
+        nifty_analytics = importlib.reload(nifty_analytics)
+        analytics_engine = nifty_analytics.NiftyAnalyticsEngine()
+        analytics_engine.load_data()
+        rev_stats = analytics_engine.get_stretch_reversal_stats(
+            timeframe=selected_tf,
+            stretch_threshold=stretch_thresh,
+            retrace_pct=retrace_goal,
+            ext_steps=ext_steps,
+            close_type=sec2_close_type,
+            weekly_scope=sec2_weekly_scope
+        )
         
     pos = rev_stats['pos']
     neg = rev_stats['neg']
@@ -661,9 +763,11 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
     neg_goal = rev_stats['neg_goal_level']
     e_s = rev_stats['ext_steps']
     
+    mode_badge = "<span style='background:rgba(56, 189, 248, 0.2); border:1px solid #38bdf8; color:#38bdf8; padding:2px 8px; border-radius:4px; font-size:11.5px; font-weight:700; margin-left:6px;'>⚡ EXPIRY CLOSE</span>" if is_expiry_mode else "<span style='background:rgba(148, 163, 184, 0.15); border:1px solid #64748b; color:#94a3b8; padding:2px 8px; border-radius:4px; font-size:11.5px; font-weight:700; margin-left:6px;'>📈 TRADINGVIEW CLOSE</span>"
+    
     st.markdown(f"""
     <div style="font-size: 13px; color: #94a3b8; margin-bottom: 12px;">
-        Timeframe: <strong style="color: #38bdf8;">{selected_tf}</strong> ({tf_desc}) | 
+        Timeframe: <strong style="color: #38bdf8;">{selected_tf_display}</strong> ({tf_desc}) {mode_badge} | 
         Trigger Level: <strong style="color: #f8fafc;">&plusmn;{stretch_thresh:.2f}%</strong> | 
         {retrace_goal:.0f}% Retracement Level: <strong style="color: #f8fafc;">+{pos_goal:.2f}%</strong> (Upside) / <strong style="color: #f8fafc;">{neg_goal:.2f}%</strong> (Downside) | 
         Total Historical Sample: <strong style="color: #f8fafc;">{total_p:,} {tf_period_name}</strong>
@@ -673,7 +777,7 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
     col_up, col_down = st.columns(2)
     with col_up:
         card_up_html = f"""<div class="metric-card" style="border-top: 3px solid #00d26a;">
-<div class="metric-label" style="font-size: 16px; color: #00d26a; font-weight: bold;">🟢 UPSIDE FIRST TOUCH (+{stretch_thresh:.2f}% from {selected_tf} Open)</div>
+<div class="metric-label" style="font-size: 16px; color: #00d26a; font-weight: bold;">🟢 UPSIDE FIRST TOUCH (+{stretch_thresh:.2f}% from {selected_tf_display} Open)</div>
 <div style="font-size: 13px; color: #94a3b8; margin-top: 4px;">Triggered in <strong>{pos['count']:,} {tf_period_name}</strong> ({pos['pct_of_all_periods']:.1f}% of all {total_p:,} {tf_period_name})</div>
 <div style="font-size: 12px; color: #cbd5e1; margin-top: 2px;">Average Peak High reached: <strong style="color: #00d26a;">+{pos['avg_peak_high']:.2f}%</strong> (Avg extra run: +{pos['avg_extension']:.2f}%, Median: +{pos['median_extension']:.2f}%)</div>
 <hr style="margin: 10px 0; border-color: #232f48;">
@@ -717,7 +821,7 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         
     with col_down:
         card_down_html = f"""<div class="metric-card" style="border-top: 3px solid #f8312f;">
-<div class="metric-label" style="font-size: 16px; color: #f8312f; font-weight: bold;">🔴 DOWNSIDE FIRST TOUCH (-{stretch_thresh:.2f}% from {selected_tf} Open)</div>
+<div class="metric-label" style="font-size: 16px; color: #f8312f; font-weight: bold;">🔴 DOWNSIDE FIRST TOUCH (-{stretch_thresh:.2f}% from {selected_tf_display} Open)</div>
 <div style="font-size: 13px; color: #94a3b8; margin-top: 4px;">Triggered in <strong>{neg['count']:,} {tf_period_name}</strong> ({neg['pct_of_all_periods']:.1f}% of all {total_p:,} {tf_period_name})</div>
 <div style="font-size: 12px; color: #cbd5e1; margin-top: 2px;">Average Trough Low reached: <strong style="color: #f8312f;">{neg['avg_trough_low']:.2f}%</strong> (Avg extra drop: -{neg['avg_extension']:.2f}%, Median: -{neg['median_extension']:.2f}%)</div>
 <hr style="margin: 10px 0; border-color: #232f48;">
@@ -761,7 +865,7 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         
     # Comparison Bar Chart
     st.markdown("---")
-    st.markdown(f"#### 📊 Comparative Progression Chart: {selected_tf} (Extension vs Retracement vs Close)")
+    st.markdown(f"#### 📊 Comparative Progression Chart: {selected_tf_display} (Extension vs Retracement vs Close)")
     
     fig_rev = go.Figure()
     categories = [
@@ -783,7 +887,6 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         pos['closed_consol_pct'],
         pos['closed_red_pct']
     ]
-    
     neg_vals = [
         neg['ext_step_pcts'][0],
         neg['ext_step_pcts'][1],
@@ -811,7 +914,7 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         textposition='auto'
     ))
     fig_rev.update_layout(
-        title=f"Post-Trigger Behavioral Distribution (First Touch = &plusmn;{stretch_thresh:.2f}% from {selected_tf} Open)",
+        title=f"Post-Trigger Behavioral Distribution (First Touch = &plusmn;{stretch_thresh:.2f}% from {selected_tf_display} Open)",
         yaxis_title="Probability (%)",
         barmode='group',
         template="plotly_dark",
@@ -822,29 +925,29 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
     
     # Dual Distribution Histogram of Final Closes
     if len(pos['final_closes']) > 0 and len(neg['final_closes']) > 0:
-        st.markdown(f"#### 🎯 Where Did Nifty End the {selected_tf}? (Final {tf_close_label} Move Distribution on Trigger {selected_tf}s)")
+        st.markdown(f"#### 🎯 Where Did Nifty End the {selected_tf_display}? (Final {tf_close_label} Move Distribution on Trigger {tf_period_name})")
         fig_hist = go.Figure()
         fig_hist.add_trace(go.Histogram(
             x=pos['final_closes'],
             nbinsx=40 if selected_tf != "Daily" else 50,
-            name=f"{selected_tf}s touching +{stretch_thresh:.2f}% ({len(pos['final_closes']):,} {tf_period_name})",
+            name=f"{selected_tf_display}s touching +{stretch_thresh:.2f}% ({len(pos['final_closes']):,} {tf_period_name})",
             marker_color='#00d26a',
             opacity=0.65
         ))
         fig_hist.add_trace(go.Histogram(
             x=neg['final_closes'],
             nbinsx=40 if selected_tf != "Daily" else 50,
-            name=f"{selected_tf}s touching -{stretch_thresh:.2f}% ({len(neg['final_closes']):,} {tf_period_name})",
+            name=f"{selected_tf_display}s touching -{stretch_thresh:.2f}% ({len(neg['final_closes']):,} {tf_period_name})",
             marker_color='#ef4444',
             opacity=0.65
         ))
-        fig_hist.add_vline(x=0.0, line_dash="dash", line_color="#94a3b8", line_width=1.5, annotation_text=f"{selected_tf} Open (0.0%)")
+        fig_hist.add_vline(x=0.0, line_dash="dash", line_color="#94a3b8", line_width=1.5, annotation_text=f"{selected_tf_display} Open (0.0%)")
         fig_hist.add_vline(x=stretch_thresh, line_dash="dot", line_color="#00d26a", line_width=1.5, annotation_text=f"+{stretch_thresh:.2f}%")
         fig_hist.add_vline(x=-stretch_thresh, line_dash="dot", line_color="#ef4444", line_width=1.5, annotation_text=f"-{stretch_thresh:.2f}%")
         fig_hist.update_layout(
-            title=f"Final Open-to-Close % on {selected_tf}s When First Touch &plusmn;{stretch_thresh:.2f}% Was Reached",
-            xaxis_title=f"Final {selected_tf} Close Move (%)",
-            yaxis_title=f"Number of {selected_tf}s",
+            title=f"Final Open-to-Close % on {selected_tf_display}s When First Touch &plusmn;{stretch_thresh:.2f}% Was Reached",
+            xaxis_title=f"Final {selected_tf_display} Close Move (%)",
+            yaxis_title=f"Number of {tf_period_name}",
             barmode='overlay',
             template="plotly_dark",
             height=380,
