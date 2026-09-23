@@ -1,7 +1,8 @@
 """
-Local Data Automation: Nifty 500 Downloader (Section 3) & Nifty Downloader (Section 4)
-======================================================================================
-Dedicated local tools for automated end-of-day data maintenance and parquet syncing.
+Local Data Automation: Unified Market Data Downloader & Sync (Section 3)
+========================================================================
+Dedicated institutional tools for automated data maintenance and parquet syncing
+across Nifty 50 (1-Min Spot, Daily, Weekly) and all 500 Nifty Equities.
 """
 
 import os
@@ -348,13 +349,14 @@ def run_stock_download(selected_symbols, download_daily=True, download_weekly=Tr
 # =============================================================
 # SECTION 4: AUTOMATED NIFTY 500 DOWNLOADER
 # =============================================================
-def render_downloader_section():
-    st.header("📥 Section 3: Nifty 500 Automated Data Downloader & Parquet Sync")
+def render_downloader_section(is_subtab=False):
+    if not is_subtab:
+        st.header("🏢 Nifty 500 Automated Data Downloader & Parquet Sync")
+    else:
+        st.markdown("### 🏢 Nifty 500 Equities Batch Downloader (500 Stocks)")
     st.markdown("""
     One-click automated end-of-day market data updater for all **500 Nifty Stocks** from `ind_nifty500list.csv`.
-    Downloads directly from TradingView, converts in-memory to **Apache Parquet**, and automatically syncs to:
-    - `D:\\NIFTY_MODEL\\stock_daily_parquet`, `stock_weekly_parquet`, `stock_monthly_parquet`
-    - `D:\\NIFTY_MODEL\\Nifty Move & Reversal Analytics\\data\\...` (Ready for Cloud deployment)
+    Downloads directly from TradingView, converts in-memory to **Apache Parquet**, and automatically syncs to local and deployment directories.
     """)
     
     # Dataset Health Card
@@ -810,12 +812,15 @@ def sync_nifty_htf_data(tv, tf_name, interval, full_bars=8000, sync_mode="increm
     return True, detail, new_bars_count, None
 
 
-def render_nifty_downloader_section():
-    st.header("⚡ Section 4: Nifty Automated Data Downloader & Parquet Sync")
+def render_nifty_downloader_section(is_subtab=False):
+    if not is_subtab:
+        st.header("⚡ Nifty Automated Data Downloader & Parquet Sync")
+    else:
+        st.markdown("### ⚡ Nifty 50 Spot & Index Data Synchronization")
     st.markdown("""
     One-click dedicated data synchronization engine for **NIFTY 50 (Spot & Index)**.
     Maintains **1-Minute Precision Spot History** (`nifty_1min_2015_2026.parquet`) and **Daily / Weekly Index Data** (`nifty_daily_data_raw.parquet`, `nifty_weekly_data_raw.parquet`).
-    - Automatically checks the latest candle dates and performs **lightning-fast incremental partial syncs**.
+    - Automatically checks latest candle dates and performs **lightning-fast incremental partial syncs**.
     - Syncs seamlessly across `./data`, `D:\\NIFTY_MODEL`, and deployment directories.
     """)
     
@@ -946,3 +951,26 @@ def render_nifty_downloader_section():
         df_audit = st.session_state['last_nifty_sync']
         st.dataframe(df_audit, width="stretch", hide_index=True)
         st.success("✅ NIFTY data successfully refreshed and synced across all local and cloud deployment directories.")
+
+
+# =============================================================
+# UNIFIED DOWNLOADER SECTION (NIFTY & STOCKS MERGED)
+# =============================================================
+def render_unified_downloader_section():
+    st.header("📥 Section 3: Automated Market Data Downloader & Parquet Sync")
+    st.markdown("""
+    Unified institutional data synchronization engine for both **NIFTY 50 (Spot & Index)** and **500 Nifty Equities**.
+    Downloads directly from TradingView, converts in-memory to **Apache Parquet**, and automatically synchronizes to local and deployment data directories.
+    """)
+    
+    d_tab1, d_tab2 = st.tabs([
+        "⚡ NIFTY 50 Index & Spot (1-Min, Daily, Weekly)",
+        "🏢 NIFTY 500 Equities Batch Downloader (500 Stocks)"
+    ])
+    
+    with d_tab1:
+        render_nifty_downloader_section(is_subtab=True)
+        
+    with d_tab2:
+        render_downloader_section(is_subtab=True)
+

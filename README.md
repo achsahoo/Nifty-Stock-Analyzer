@@ -16,15 +16,10 @@ A comprehensive, institutional-grade market analytics platform combining statist
 - Evaluates first touch across Daily (2,896 1-minute sessions), Weekly (1,603 weeks), and Monthly (369 months).
 - Measures 50% retracement probabilities, return to period open, trend continuation closes, and failed reversal settlements.
 
-### 📥 Section 3: Nifty 500 Automated Data Downloader
-- One-click batch downloader for all 501 symbols from `ind_nifty500list.csv` using TradingView (`tvDatafeed`).
-- Direct in-memory conversion to Apache Parquet across Daily, Weekly, and Monthly timeframes.
-- Real-time audit dashboard with separate Success vs. Failure tables and a 1-click **"🔄 Re-try Failed Stocks Only"** button.
-
-### ⚡ Section 4: Nifty Automated Data Downloader
-- Dedicated synchronization engine for **NIFTY 50 Spot & Index Data**.
-- Maintains **1-Minute Precision Spot History** (`nifty_1min_2015_2026.parquet`) and **Daily / Weekly Higher Timeframes** (`nifty_daily_data_raw.parquet`, `nifty_weekly_data_raw.parquet`).
-- Automatic incremental checks with fast partial sync capabilities.
+### 📥 Section 3: Automated Market Data Downloader & Parquet Sync (Nifty 50 & Stocks)
+- Unified institutional data synchronization engine with sub-tabs for both **NIFTY 50** and **500 Nifty Equities**:
+  - **⚡ Nifty 50 Spot & Index:** Maintains **1-Minute Precision Spot History** (`nifty_1min_2015_2026.parquet`) and **Daily / Weekly Higher Timeframes** (`nifty_daily_data_raw.parquet`, `nifty_weekly_data_raw.parquet`) with instant incremental partial syncs.
+  - **🏢 Nifty 500 Equities:** One-click batch downloader for all 501 symbols from `ind_nifty500list.csv` converting in-memory directly to Apache Parquet (Daily, Weekly, Monthly) with automated retry for failed downloads.
 
 ---
 
