@@ -252,12 +252,12 @@ if nav_selection == "📊 Section 1: Range & Move Distribution":
                 "🗓️ Weekly Expiry Contract Scope:",
                 [
                     "🎯 Official F&O Weekly Era (Feb 2019 – Present: ~397 Weeks)",
-                    "🕰️ Extended History (Synthetic Thursday 2015 – 2019: ~610 Weeks)"
+                    "🕰️ Extended History (Synthetic Thursday 1996 – Present: ~1,603 Weeks)"
                 ],
                 index=0,
                 key="s1_weekly_scope",
                 horizontal=True,
-                help="• Official F&O Weekly Era: Matches NSE regulatory history (weekly options officially launched on Feb 11, 2019).\n• Extended History: Evaluates Thursday-to-Thursday weekly cycles back to 2015 for longer historical backtesting."
+                help="• Official F&O Weekly Era: Matches NSE regulatory history (weekly options officially launched on Feb 11, 2019: ~397 Weeks).\n• Extended History: Evaluates Thursday-to-Thursday weekly cycles back to 1996 for 30+ years historical backtesting (~1,603 Weeks)."
             )
             weekly_scope = "Official" if "official" in weekly_scope_choice.lower() else "Full"
         else:
@@ -529,12 +529,12 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
                 "🗓️ Weekly Expiry Contract Scope:",
                 [
                     "🎯 Official F&O Weekly Era (Feb 2019 – Present: ~397 Weeks)",
-                    "🕰️ Extended History (Synthetic Thursday 2015 – 2019: ~610 Weeks)"
+                    "🕰️ Extended History (Synthetic Thursday 1996 – Present: ~1,603 Weeks)"
                 ],
                 index=0,
                 key="s2_weekly_scope",
                 horizontal=True,
-                help="• Official F&O Weekly Era: Matches NSE regulatory history (weekly options officially launched on Feb 11, 2019).\n• Extended History: Evaluates Thursday-to-Thursday weekly cycles back to 2015 for longer historical backtesting."
+                help="• Official F&O Weekly Era: Matches NSE regulatory history (weekly options officially launched on Feb 11, 2019: ~397 Weeks).\n• Extended History: Evaluates Thursday-to-Thursday weekly cycles back to 1996 for 30+ years historical backtesting (~1,603 Weeks)."
             )
             sec2_weekly_scope = "Official" if "official" in sec2_weekly_scope_choice.lower() else "Full"
         else:
@@ -622,7 +622,7 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         default_stretch = 0.50
         s_min, s_max, s_step = 0.20, 2.50, 0.05
         ext_steps = [0.25, 0.50, 0.75, 1.00]
-        tf_desc = f"{total_days:,} trading sessions ({min_year} – {max_year}), measured from Day Open (09:15) to 15:30 Close"
+        tf_desc = f"2,896 trading sessions (2015 – 2026, 1-Minute Precision), measured from Day Open (09:15) to 15:30 Close"
         tf_period_name = "days"
         tf_close_label = "Day Close at 15:30"
         rev_label_pos = "Closed RED (< 0.0%)"
@@ -636,7 +636,7 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         if is_expiry_mode:
             tf_period_name = "expiry weeks"
             total_exp_w = len(analytics_engine._weekly_expiry_full_df) if sec2_weekly_scope == "Full" else len(analytics_engine._weekly_expiry_official_df)
-            scope_desc = "2015 – Present" if sec2_weekly_scope == "Full" else "Feb 2019 – Present"
+            scope_desc = "1996 – Present" if sec2_weekly_scope == "Full" else "Feb 2019 – Present"
             tf_desc = f"{total_exp_w:,} F&O weekly expiry cycles ({scope_desc}), measured from Post-Expiry Open (09:15) to Expiry 15:30 Close"
             tf_close_label = "Thursday/Tuesday Expiry Close at 15:30"
             rev_label_pos = "Closed RED Expiry Week (< 0.0%)"
@@ -657,7 +657,7 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         if is_expiry_mode:
             tf_period_name = "expiry months"
             total_exp_m = len(analytics_engine._monthly_expiry_df)
-            tf_desc = f"{total_exp_m:,} F&O monthly expiry cycles (2015 – Present), measured from Post-Expiry Open (09:15) to Monthly Expiry 15:30 Close"
+            tf_desc = f"{total_exp_m:,} F&O monthly expiry cycles (1996 – Present), measured from Post-Expiry Open (09:15) to Monthly Expiry 15:30 Close"
             tf_close_label = "Last Thursday/Tuesday Expiry Close at 15:30"
             rev_label_pos = "Closed RED Expiry Month (< 0.0%)"
             rev_label_neg = "Closed GREEN Expiry Month (> 0.0%)"

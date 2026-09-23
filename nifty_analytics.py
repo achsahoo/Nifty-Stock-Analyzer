@@ -17,6 +17,32 @@ def _resolve_spot_file():
             return p
     return candidates[0]
 
+def _resolve_daily_file():
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "data", "nifty_daily_weekly_parquet", "nifty_daily_data_raw.parquet"),
+        os.path.join(os.path.dirname(__file__), "data", "nifty_daily_data_raw.parquet"),
+        r"D:\NIFTY_MODEL\Nifty & Stock Analyzer\data\nifty_daily_weekly_parquet\nifty_daily_data_raw.parquet",
+        r"D:\NIFTY_MODEL\nifty_daily_weekly_parquet\nifty_daily_data_raw.parquet",
+        r"D:\mo\t_data\Nifty\nifty_daily_weekly\nifty_daily_data_raw.parquet",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return candidates[0]
+
+def _resolve_weekly_file():
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "data", "nifty_daily_weekly_parquet", "nifty_weekly_data_raw.parquet"),
+        os.path.join(os.path.dirname(__file__), "data", "nifty_weekly_data_raw.parquet"),
+        r"D:\NIFTY_MODEL\Nifty & Stock Analyzer\data\nifty_daily_weekly_parquet\nifty_weekly_data_raw.parquet",
+        r"D:\NIFTY_MODEL\nifty_daily_weekly_parquet\nifty_weekly_data_raw.parquet",
+        r"D:\mo\t_data\Nifty\nifty_daily_weekly\nifty_weekly_data_raw.parquet",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return candidates[0]
+
 SPOT_FILE = _resolve_spot_file()
 
 def compute_monthly_expiries(trading_days):
@@ -157,45 +183,37 @@ class NiftyAnalyticsEngine:
         self._grouped_cache = {}
         
     def load_data(self):
-        if self._df_raw is None:
-            df = pl.read_parquet(self.parquet_path)
-            # Add date, week, month, and time columns
-            df = df.with_columns([
-                pl.col("date").dt.date().alias("day"),
-                pl.col("date").dt.truncate("1w").alias("week"),
-                pl.col("date").dt.truncate("1mo").alias("month"),
-                pl.col("date").dt.strftime("%H:%M:00").alias("time_str")
-            ])
-            self._df_raw = df
+        # 1. Load Clean Historical Daily Data (1996 - Present, discarding flat synthetic 1990-1995 data)
+        if self._daily_df is None:
+            daily_file = _resolve_daily_file()
+            df_d = pd.read_parquet(daily_file)
+            df_d['datetime'] = pd.to_datetime(df_d['datetime'])
             
-            # 1. Daily Aggregation
-            daily = df.group_by("day").agg([
-                pl.col("open").first().alias("open"),
-                pl.col("high").max().alias("high"),
-                pl.col("low").min().alias("low"),
-                pl.col("close").last().alias("close"),
-                pl.col("date").first().alias("datetime")
-            ]).sort("day").to_pandas()
+            # Exclude improper pre-1996 synthetic years where open==high==low==close
+            clean_mask = (df_d['datetime'].dt.year >= 1996) & (df_d['high'] > df_d['low'])
+            clean_d = df_d[clean_mask].copy().sort_values('datetime').reset_index(drop=True)
             
-            daily['date'] = pd.to_datetime(daily['day'])
-            daily['range_pct'] = (daily['high'] - daily['low']) / daily['open'] * 100.0
-            daily['move_pct'] = (daily['close'] - daily['open']) / daily['open'] * 100.0
-            daily['day_name'] = daily['date'].dt.day_name()
-            self._daily_df = daily
+            clean_d['date'] = clean_d['datetime']
+            clean_d['day'] = clean_d['date'].dt.date
+            clean_d['range_pct'] = (clean_d['high'] - clean_d['low']) / clean_d['open'] * 100.0
+            clean_d['move_pct'] = (clean_d['close'] - clean_d['open']) / clean_d['open'] * 100.0
+            clean_d['day_name'] = clean_d['date'].dt.day_name()
+            clean_d['time_str'] = clean_d['date'].dt.strftime('%a %d-%b')
+            self._daily_df = clean_d
             
-            # 2. Weekly Aggregation
-            daily_indexed = daily.set_index('date')
-            weekly = daily_indexed.resample('W-FRI').agg({
-                'open': 'first',
-                'high': 'max',
-                'low': 'min',
-                'close': 'last'
-            }).dropna().reset_index()
-            weekly['range_pct'] = (weekly['high'] - weekly['low']) / weekly['open'] * 100.0
-            weekly['move_pct'] = (weekly['close'] - weekly['open']) / weekly['open'] * 100.0
-            self._weekly_df = weekly
+            # 2. Load Clean Historical Weekly Data (1996 - Present)
+            weekly_file = _resolve_weekly_file()
+            df_w = pd.read_parquet(weekly_file)
+            df_w['datetime'] = pd.to_datetime(df_w['datetime'])
+            w_mask = (df_w['datetime'].dt.year >= 1996) & (df_w['high'] > df_w['low'])
+            clean_w = df_w[w_mask].copy().sort_values('datetime').reset_index(drop=True)
+            clean_w['date'] = clean_w['datetime']
+            clean_w['range_pct'] = (clean_w['high'] - clean_w['low']) / clean_w['open'] * 100.0
+            clean_w['move_pct'] = (clean_w['close'] - clean_w['open']) / clean_w['open'] * 100.0
+            self._weekly_df = clean_w
             
-            # 3. Monthly Aggregation
+            # 3. Monthly Aggregation (1996 - Present)
+            daily_indexed = clean_d.set_index('date')
             monthly = daily_indexed.resample('ME').agg({
                 'open': 'first',
                 'high': 'max',
@@ -207,20 +225,32 @@ class NiftyAnalyticsEngine:
             self._monthly_df = monthly
             
             # 4. Expiry Aggregations (NSE F&O Schedule & Holiday Shifts)
-            trading_days = sorted(daily['date'].dt.date.unique())
+            trading_days = sorted(clean_d['date'].dt.date.unique())
             
-            # Monthly Expiries (2015 – 2026)
+            # Monthly Expiries (1996 – Present: ~369 cycles)
             self._monthly_expiries_meta = compute_monthly_expiries(trading_days)
-            self._monthly_expiry_df = build_expiry_cycles(daily, self._monthly_expiries_meta)
+            self._monthly_expiry_df = build_expiry_cycles(clean_d, self._monthly_expiries_meta)
             
             # Weekly Expiries (Official F&O Era: Feb 11, 2019+)
             start_official = datetime.date(2019, 2, 11)
             self._weekly_expiries_official_meta = compute_weekly_expiries(trading_days, start_official)
-            self._weekly_expiry_official_df = build_expiry_cycles(daily, self._weekly_expiries_official_meta, start_official)
+            self._weekly_expiry_official_df = build_expiry_cycles(clean_d, self._weekly_expiries_official_meta, start_official)
             
-            # Weekly Expiries (Full Extended: 2015+)
+            # Weekly Expiries (Full Extended History: 1996+)
             self._weekly_expiries_full_meta = compute_weekly_expiries(trading_days, trading_days[0])
-            self._weekly_expiry_full_df = build_expiry_cycles(daily, self._weekly_expiries_full_meta)
+            self._weekly_expiry_full_df = build_expiry_cycles(clean_d, self._weekly_expiries_full_meta)
+
+        # 5. Load 1-Minute Data (for Intraday Precision in Section 2 Daily)
+        if self._df_raw is None:
+            if os.path.exists(self.parquet_path):
+                df = pl.read_parquet(self.parquet_path)
+                df = df.with_columns([
+                    pl.col("date").dt.date().alias("day"),
+                    pl.col("date").dt.truncate("1w").alias("week"),
+                    pl.col("date").dt.truncate("1mo").alias("month"),
+                    pl.col("date").dt.strftime("%H:%M:00").alias("time_str")
+                ])
+                self._df_raw = df
             
     def get_range_and_move_stats(self, timeframe="Daily", threshold_pct=1.0, close_type="TradingView", weekly_scope="Official", *args, **kwargs):
         self.load_data()
@@ -235,7 +265,7 @@ class NiftyAnalyticsEngine:
             if is_expiry:
                 if "full" in str(weekly_scope).lower() or "extended" in str(weekly_scope).lower():
                     df = self._weekly_expiry_full_df
-                    period_label = "Expiry Weeks (2015–Present)"
+                    period_label = "Expiry Weeks (1996–Present)"
                 else:
                     df = self._weekly_expiry_official_df
                     period_label = "Expiry Weeks (Feb 2019–Present)"
@@ -329,63 +359,92 @@ class NiftyAnalyticsEngine:
         }
         return stats
 
-    def _build_minute_expiry_groups(self, meta, start_date=None):
-        df_sub = self._df_raw
+    def _build_daily_expiry_groups(self, meta, start_date=None):
+        df = self._daily_df.copy()
         if start_date:
-            start_ts = np.datetime64(str(start_date) + 'T00:00:00', 'ns')
-            df_sub = df_sub.filter(pl.col('date') >= start_ts)
-            
-        exp_ts = np.array([np.datetime64(str(m['actual_date']) + 'T23:59:59', 'ns') for m in meta])
-        dt_arr = df_sub['date'].to_numpy()
-        indices = np.searchsorted(exp_ts, dt_arr)
+            df = df[df['date'].dt.date >= start_date].copy()
+        actual_dates = [item['actual_date'] for item in meta]
+        exp_ts = [pd.Timestamp(d) for d in actual_dates]
+        indices = np.searchsorted(exp_ts, df['date'])
         valid_mask = indices < len(exp_ts)
+        df = df[valid_mask].copy()
+        df['cycle_id'] = indices[valid_mask]
         
-        df_sub = df_sub.filter(pl.Series(valid_mask)).with_columns(pl.Series('cycle_id', indices[valid_mask]))
-        period_opens = df_sub.group_by('cycle_id').agg(pl.col('open').first().alias('period_open'))
-        df_joined = df_sub.join(period_opens, on='cycle_id').with_columns([
-            ((pl.col('high') - pl.col('period_open')) / pl.col('period_open') * 100.0).alias('move_high_pct'),
-            ((pl.col('low') - pl.col('period_open')) / pl.col('period_open') * 100.0).alias('move_low_pct'),
-            ((pl.col('close') - pl.col('period_open')) / pl.col('period_open') * 100.0).alias('move_close_pct')
-        ]).to_pandas()
-        
-        return [group for _, group in df_joined.groupby('cycle_id', sort=True)]
+        period_opens = df.groupby('cycle_id')['open'].first().rename('period_open')
+        df = df.join(period_opens, on='cycle_id')
+        df['move_high_pct'] = (df['high'] - df['period_open']) / df['period_open'] * 100.0
+        df['move_low_pct'] = (df['low'] - df['period_open']) / df['period_open'] * 100.0
+        df['move_close_pct'] = (df['close'] - df['period_open']) / df['period_open'] * 100.0
+        return [group for _, group in df.groupby('cycle_id', sort=True)]
 
     def _get_period_groups(self, timeframe="Daily", close_type="TradingView", weekly_scope="Official"):
         self.load_data()
         is_expiry = ("expiry" in str(close_type).lower())
         
-        if timeframe == "Daily" or not is_expiry:
-            col = {"Daily": "day", "Weekly": "week", "Monthly": "month"}.get(timeframe, "day")
-            cache_key = col
+        if timeframe == "Daily":
+            cache_key = "daily_1min"
             if cache_key not in self._grouped_cache:
                 df_raw = self._df_raw
-                period_opens = df_raw.group_by(col).agg(pl.col("open").first().alias("period_open"))
-                df_joined = df_raw.join(period_opens, on=col).with_columns([
-                    ((pl.col("high") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_high_pct"),
-                    ((pl.col("low") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_low_pct"),
-                    ((pl.col("close") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_close_pct")
-                ]).to_pandas()
-                self._grouped_cache[cache_key] = [group for _, group in df_joined.groupby(col, sort=True)]
+                if df_raw is not None:
+                    period_opens = df_raw.group_by("day").agg(pl.col("open").first().alias("period_open"))
+                    df_joined = df_raw.join(period_opens, on="day").with_columns([
+                        ((pl.col("high") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_high_pct"),
+                        ((pl.col("low") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_low_pct"),
+                        ((pl.col("close") - pl.col("period_open")) / pl.col("period_open") * 100.0).alias("move_close_pct")
+                    ]).to_pandas()
+                    self._grouped_cache[cache_key] = [group for _, group in df_joined.groupby("day", sort=True)]
+                else:
+                    # Fallback to daily bars if 1-min not found
+                    df = self._daily_df.copy()
+                    df['move_high_pct'] = (df['high'] - df['open']) / df['open'] * 100.0
+                    df['move_low_pct'] = (df['low'] - df['open']) / df['open'] * 100.0
+                    df['move_close_pct'] = (df['close'] - df['open']) / df['open'] * 100.0
+                    self._grouped_cache[cache_key] = [df.iloc[[i]] for i in range(len(df))]
             return self._grouped_cache[cache_key]
-        else:
-            if timeframe == "Weekly":
+            
+        elif timeframe == "Weekly":
+            if is_expiry:
                 is_full = ("full" in str(weekly_scope).lower() or "extended" in str(weekly_scope).lower())
-                cache_key = "weekly_expiry_full" if is_full else "weekly_expiry_official"
+                cache_key = "weekly_expiry_full_clean" if is_full else "weekly_expiry_official_clean"
                 if cache_key not in self._grouped_cache:
                     if is_full:
-                        self._grouped_cache[cache_key] = self._build_minute_expiry_groups(self._weekly_expiries_full_meta)
+                        self._grouped_cache[cache_key] = self._build_daily_expiry_groups(self._weekly_expiries_full_meta)
                     else:
-                        self._grouped_cache[cache_key] = self._build_minute_expiry_groups(
+                        self._grouped_cache[cache_key] = self._build_daily_expiry_groups(
                             self._weekly_expiries_official_meta, start_date=datetime.date(2019, 2, 11)
                         )
                 return self._grouped_cache[cache_key]
-            elif timeframe == "Monthly":
-                cache_key = "monthly_expiry"
+            else:
+                cache_key = "weekly_tv_clean"
                 if cache_key not in self._grouped_cache:
-                    self._grouped_cache[cache_key] = self._build_minute_expiry_groups(self._monthly_expiries_meta)
+                    df = self._daily_df.copy()
+                    df['week_id'] = df['date'].dt.to_period('W-FRI').dt.start_time
+                    period_opens = df.groupby('week_id')['open'].first().rename('period_open')
+                    df = df.join(period_opens, on='week_id')
+                    df['move_high_pct'] = (df['high'] - df['period_open']) / df['period_open'] * 100.0
+                    df['move_low_pct'] = (df['low'] - df['period_open']) / df['period_open'] * 100.0
+                    df['move_close_pct'] = (df['close'] - df['period_open']) / df['period_open'] * 100.0
+                    self._grouped_cache[cache_key] = [group for _, group in df.groupby('week_id', sort=True)]
+                return self._grouped_cache[cache_key]
+                
+        elif timeframe == "Monthly":
+            if is_expiry:
+                cache_key = "monthly_expiry_clean"
+                if cache_key not in self._grouped_cache:
+                    self._grouped_cache[cache_key] = self._build_daily_expiry_groups(self._monthly_expiries_meta)
                 return self._grouped_cache[cache_key]
             else:
-                return self._get_period_groups("Daily", close_type="TradingView")
+                cache_key = "monthly_tv_clean"
+                if cache_key not in self._grouped_cache:
+                    df = self._daily_df.copy()
+                    df['month_id'] = df['date'].dt.to_period('M').dt.start_time
+                    period_opens = df.groupby('month_id')['open'].first().rename('period_open')
+                    df = df.join(period_opens, on='month_id')
+                    df['move_high_pct'] = (df['high'] - df['period_open']) / df['period_open'] * 100.0
+                    df['move_low_pct'] = (df['low'] - df['period_open']) / df['period_open'] * 100.0
+                    df['move_close_pct'] = (df['close'] - df['period_open']) / df['period_open'] * 100.0
+                    self._grouped_cache[cache_key] = [group for _, group in df.groupby('month_id', sort=True)]
+                return self._grouped_cache[cache_key]
 
     def get_stretch_reversal_stats(self, timeframe="Daily", stretch_threshold=None, retrace_pct=50.0, ext_steps=None, close_type="TradingView", weekly_scope="Official", *args, **kwargs):
         if stretch_threshold is None:
