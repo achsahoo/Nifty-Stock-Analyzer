@@ -154,10 +154,8 @@ with st.sidebar:
     nav_options = [
         "📊 Section 1: Range & Move Distribution",
         "🔄 Section 2: First-Touch Stretch & Reversals",
-        "📐 Section 3: RSI Custom Divergence Backtest",
-        "📥 Section 4: Nifty 500 Automated Data Downloader",
-        "🔍 Section 5: Nifty 500 Multi-Stock Divergence Scanner",
-        "⚡ Section 6: Nifty Automated Data Downloader"
+        "📥 Section 3: Nifty 500 Automated Data Downloader",
+        "⚡ Section 4: Nifty Automated Data Downloader"
     ]
     
     default_nav_idx = 0
@@ -995,13 +993,9 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
 
 
 # =============================================================
-# SECTION 3: RSI CUSTOM DIVERGENCE BACKTEST ENGINE
+# SECTION 3: NIFTY 500 AUTOMATED DATA DOWNLOADER
 # =============================================================
-elif nav_selection == "📐 Section 3: RSI Custom Divergence Backtest":
-    from rsi_divergence_ui import render_rsi_divergence_section
-    render_rsi_divergence_section(analytics_engine)
-
-elif nav_selection == "📥 Section 4: Nifty 500 Automated Data Downloader":
+elif "Nifty 500 Automated Data Downloader" in nav_selection:
     try:
         import local_data_automation
         if not hasattr(local_data_automation, "render_downloader_section"):
@@ -1009,25 +1003,15 @@ elif nav_selection == "📥 Section 4: Nifty 500 Automated Data Downloader":
             local_data_automation = importlib.reload(local_data_automation)
         local_data_automation.render_downloader_section()
     except Exception as e:
-        st.error(f"### ⚠️ Failed to load Section 4: {e}")
+        st.error(f"### ⚠️ Failed to load Section 3: {e}")
         st.info("💡 **Tip**: If you recently updated the app, please click **'Manage app'** (lower-right corner) ➔ **'Reboot app'**.")
         import traceback
         st.code(traceback.format_exc(), language="python")
 
-elif nav_selection == "🔍 Section 5: Nifty 500 Multi-Stock Divergence Scanner":
-    try:
-        import local_data_automation
-        if not hasattr(local_data_automation, "render_scanner_section"):
-            import importlib
-            local_data_automation = importlib.reload(local_data_automation)
-        local_data_automation.render_scanner_section()
-    except Exception as e:
-        st.error(f"### ⚠️ Failed to load Section 5: {e}")
-        st.info("💡 **Tip**: If you recently updated the app, please click **'Manage app'** (lower-right corner) ➔ **'Reboot app'**.")
-        import traceback
-        st.code(traceback.format_exc(), language="python")
-
-elif nav_selection == "⚡ Section 6: Nifty Automated Data Downloader":
+# =============================================================
+# SECTION 4: AUTOMATED NIFTY DATA DOWNLOADER
+# =============================================================
+elif "Nifty Automated Data Downloader" in nav_selection:
     try:
         import local_data_automation
         if not hasattr(local_data_automation, "render_nifty_downloader_section"):
@@ -1035,7 +1019,7 @@ elif nav_selection == "⚡ Section 6: Nifty Automated Data Downloader":
             local_data_automation = importlib.reload(local_data_automation)
         local_data_automation.render_nifty_downloader_section()
     except Exception as e:
-        st.error(f"### ⚠️ Failed to load Section 6: {e}")
+        st.error(f"### ⚠️ Failed to load Section 4: {e}")
         st.info("💡 **Tip**: If you recently updated the app on Streamlit Cloud, please click **'Manage app'** (lower-right corner) ➔ **'Reboot app'** to reload newly deployed modules.")
         import traceback
         st.code(traceback.format_exc(), language="python")

@@ -1,7 +1,7 @@
 """
-Local Data Automation: Nifty 500 Downloader (Section 4) & Multi-Stock Scanner (Section 5)
-========================================================================================
-Dedicated local tools for automated end-of-day data maintenance and real-time market scans.
+Local Data Automation: Nifty 500 Downloader (Section 3) & Nifty Downloader (Section 4)
+======================================================================================
+Dedicated local tools for automated end-of-day data maintenance and parquet syncing.
 """
 
 import os
@@ -349,7 +349,7 @@ def run_stock_download(selected_symbols, download_daily=True, download_weekly=Tr
 # SECTION 4: AUTOMATED NIFTY 500 DOWNLOADER
 # =============================================================
 def render_downloader_section():
-    st.header("📥 Section 4: Nifty 500 Automated Data Downloader & Parquet Sync")
+    st.header("📥 Section 3: Nifty 500 Automated Data Downloader & Parquet Sync")
     st.markdown("""
     One-click automated end-of-day market data updater for all **500 Nifty Stocks** from `ind_nifty500list.csv`.
     Downloads directly from TradingView, converts in-memory to **Apache Parquet**, and automatically syncs to:
@@ -501,249 +501,11 @@ def render_downloader_section():
                 st.info("No successful downloads recorded yet.")
 
 
-# =============================================================
-# SECTION 5: NIFTY 500 DIVERGENCE SCANNER
-# =============================================================
-def run_divergence_scanner(
-    timeframe="Weekly",
-    recency_mode="Recent (2026 - Present)",
-    direction_filter="All",
-    price_basis="close"
-):
-    """
-    Scans all available stock parquets for divergence signals matching recency and direction filters.
-    Supports Daily, Weekly, and Monthly timeframes with configurable Price Basis (Candle Close vs Open).
-    """
-    from rsi_divergence_ui import detect_pivots_and_signals
-    
-    if timeframe == "Weekly":
-        target_dir = LOCAL_STOCK_WEEKLY_DIR
-        pattern_suffix = "_weekly_data_raw.parquet"
-    elif timeframe == "Monthly":
-        target_dir = LOCAL_STOCK_MONTHLY_DIR if os.path.exists(LOCAL_STOCK_MONTHLY_DIR) else LOCAL_STOCK_DAILY_DIR
-        pattern_suffix = "_monthly_data_raw.parquet" if os.path.exists(LOCAL_STOCK_MONTHLY_DIR) else "_daily_data_raw.parquet"
-    else: # Daily
-        target_dir = LOCAL_STOCK_DAILY_DIR
-        pattern_suffix = "_daily_data_raw.parquet"
-        
-    if not os.path.exists(target_dir):
-        st.error(f"Data directory `{target_dir}` not found.")
-        return pd.DataFrame()
-        
-    files = [f for f in os.listdir(target_dir) if f.endswith(pattern_suffix)]
-    if not files:
-        st.warning(f"No parquets found in `{target_dir}` for timeframe {timeframe}.")
-        return pd.DataFrame()
-        
-    total_files = len(files)
-    scan_prog = st.progress(0.0)
-    scan_status = st.empty()
-    
-    signals_found = []
-    
-    for idx, f in enumerate(files):
-        sym = f.replace(pattern_suffix, "")
-        p = os.path.join(target_dir, f)
-        try:
-            df = pd.read_parquet(p)
-            df['datetime'] = pd.to_datetime(df['datetime'])
-            
-            # If monthly requested but loading from daily parquet
-            if timeframe == "Monthly" and pattern_suffix == "_daily_data_raw.parquet":
-                df = df.set_index('datetime').resample('ME').agg({
-                    'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'
-                }).dropna().reset_index()
-                
-            df['date'] = pd.to_datetime(df['datetime'])
-            df = df.sort_values('date').reset_index(drop=True)
-            if len(df) < 50:
-                continue
-                
-            _, sig_df = detect_pivots_and_signals(df, rsi_len=14, lb_left=5, lb_right=5, tol=0.002, price_basis=price_basis)
-            if not sig_df.empty:
-                # Filter by recency
-                if recency_mode.startswith("🔥 Today") or "Today" in recency_mode:
-                    last_candle_day = df['date'].dt.date.iloc[-1]
-                    if "Confirmed at p+lbR" in recency_mode:
-                        sig_recent = sig_df[sig_df['confirm_date'].dt.date == last_candle_day]
-                    else:
-                        sig_recent = sig_df[sig_df['signal_date'].dt.date == last_candle_day]
-                elif recency_mode.startswith("Recent (2026"):
-                    sig_recent = sig_df[sig_df['confirm_date'] >= '2026-01-01']
-                elif recency_mode.startswith("Last 4 Weeks / 20 Days"):
-                    cutoff = df['date'].max() - pd.Timedelta(days=28)
-                    sig_recent = sig_df[sig_df['confirm_date'] >= cutoff]
-                elif recency_mode.startswith("Last 8 Weeks / 40 Days"):
-                    cutoff = df['date'].max() - pd.Timedelta(days=56)
-                    sig_recent = sig_df[sig_df['confirm_date'] >= cutoff]
-                else: # All history
-                    sig_recent = sig_df
-                    
-                # Filter by direction
-                if direction_filter == "🟢 Bullish Only (BUY)":
-                    sig_recent = sig_recent[sig_recent['signal'] == 'BUY']
-                elif direction_filter == "🔴 Bearish Only (SELL)":
-                    sig_recent = sig_recent[sig_recent['signal'] == 'SELL']
-                    
-                for _, r in sig_recent.iterrows():
-                    sl_ref = r['signal_low'] if r['signal'] == 'BUY' else r['signal_high']
-                    c_idx = int(r['confirm_idx']) if 'confirm_idx' in r and not pd.isna(r['confirm_idx']) else len(df) - 1
-                    ref_price_col = 'open' if price_basis == 'open' else 'close'
-                    confirm_ref_price = df[ref_price_col].iloc[c_idx] if c_idx < len(df) else r['price']
-                    
-                    risk_pct = abs((confirm_ref_price - sl_ref) / confirm_ref_price) * 100.0 if confirm_ref_price > 0 else 0.0
-                    signals_found.append({
-                        'Symbol': sym,
-                        'Timeframe': timeframe,
-                        'Basis': 'Open' if price_basis == 'open' else 'Close',
-                        'Signal': '🟢 BUY' if r['signal'] == 'BUY' else '🔴 SELL',
-                        'raw_signal': r['signal'],
-                        'Signal_Date': r['signal_date'].strftime('%Y-%m-%d'),
-                        'Confirm_Date': r['confirm_date'].strftime('%Y-%m-%d'),
-                        'Current / Entry Price': f"₹{confirm_ref_price:,.2f}",
-                        'Pivot Price (p)': f"₹{r['price']:,.2f}",
-                        'raw_price': confirm_ref_price,
-                        'RSI': f"{r['rsi']:.1f}",
-                        'Pattern': r['reason'],
-                        'Dynamic SL': f"₹{sl_ref:,.2f}",
-                        'SL Risk': f"{risk_pct:.1f}%"
-                    })
-        except Exception:
-            pass
-            
-        if idx % 10 == 0 or idx == total_files - 1:
-            scan_prog.progress((idx + 1) / total_files)
-            scan_status.markdown(f"🔍 Scanned **{idx+1}/{total_files}** stocks | Found **{len(signals_found)}** divergences...")
-            
-    scan_status.empty()
-    scan_prog.empty()
-    
-    if signals_found:
-        df_out = pd.DataFrame(signals_found)
-        return df_out.sort_values('Confirm_Date', ascending=False).reset_index(drop=True)
-    return pd.DataFrame()
 
-
-def render_scanner_section():
-    st.header("🔍 Section 5: Nifty 500 Multi-Stock Divergence Scanner")
-    st.markdown("""
-    High-speed scanner analyzing all **500 Nifty Equities** across **Daily, Weekly, and Monthly** candles.
-    Instantly detects genuine **Bullish and Bearish RSI Divergences** on **Candle Close** (Standard EOD) or **Candle Open** (Early Morning Signal).
-    """)
-    
-    sc1, sc2, sc3, sc4 = st.columns([1.3, 1.8, 1.8, 1.6])
-    with sc1:
-        scan_tf = st.selectbox("Scan Timeframe:", ["Weekly", "Daily", "Monthly"], index=0, key="sec5_scan_tf")
-    with sc2:
-        scan_basis = st.selectbox(
-            "Signal Timing / Basis:",
-            [
-                "📊 Candle Close Divergence (Standard)",
-                "🌅 Candle Open Divergence (Early Signal)"
-            ],
-            index=0,
-            key="sec5_scan_basis",
-            help="Choose whether divergence is confirmed on Candle Close or evaluated on Candle Open."
-        )
-        basis_val = "open" if "Open" in scan_basis else "close"
-    with sc3:
-        today_label = "🔥 Today (Signal on Latest Open)" if basis_val == "open" else "🔥 Today (Signal on Latest Close)"
-        scan_recency = st.selectbox(
-            "Signal Recency Filter:",
-            [
-                today_label,
-                "⚡ Today (Alert Confirmed at p+lbR)",
-                "Last 4 Weeks / 20 Days",
-                "Recent (2026 - Present)",
-                "Last 8 Weeks / 40 Days",
-                "All Confirmed Signals"
-            ],
-            index=0,
-            key="sec5_scan_rec"
-        )
-    with sc4:
-        scan_dir = st.selectbox("Direction Filter:", ["All", "🟢 Bullish Only (BUY)", "🔴 Bearish Only (SELL)"], index=0, key="sec5_scan_dir")
-        
-    st.markdown("<br>", unsafe_allow_html=True)
-    bcol1, bcol2, bcol3 = st.columns([1.8, 1.8, 2.0])
-    with bcol1:
-        btn_scan_close = st.button("📊 Scan Candle Close Divergences", type="primary", key="btn_sec5_close")
-    with bcol2:
-        btn_scan_open = st.button("🌅 Scan Candle Open Divergences", key="btn_sec5_open")
-    with bcol3:
-        btn_scan_custom = st.button("🚀 Run RSI Scanner (Active Filters)", key="btn_sec5_run")
-        
-    run_scan = False
-    chosen_basis = basis_val
-    if btn_scan_close:
-        run_scan = True
-        chosen_basis = "close"
-    elif btn_scan_open:
-        run_scan = True
-        chosen_basis = "open"
-    elif btn_scan_custom:
-        run_scan = True
-        chosen_basis = basis_val
-        
-    if run_scan:
-        with st.spinner(f"Scanning 500 stocks for {scan_tf} divergences ({chosen_basis.upper()} basis)..."):
-            t_start = time.time()
-            scan_results = run_divergence_scanner(
-                scan_tf,
-                scan_recency,
-                scan_dir,
-                price_basis=chosen_basis
-            )
-            t_elapsed = time.time() - t_start
-            st.session_state['sec5_scan_results'] = scan_results
-            st.session_state['sec5_scan_time'] = t_elapsed
-            st.session_state['sec5_active_tf'] = scan_tf
-            st.session_state['sec5_active_basis'] = chosen_basis
-            
-    if 'sec5_scan_results' in st.session_state:
-        res_df = st.session_state['sec5_scan_results']
-        t_el = st.session_state.get('sec5_scan_time', 0.0)
-        cur_tf = st.session_state.get('sec5_active_tf', scan_tf)
-        
-        if not res_df.empty:
-            buys = len(res_df[res_df['raw_signal'] == 'BUY'])
-            sells = len(res_df[res_df['raw_signal'] == 'SELL'])
-            
-            st.markdown("---")
-            k1, k2, k3, k4 = st.columns(4)
-            with k1:
-                st.markdown(f"""<div class='metric-card'><span class='metric-label'>Total Matches</span><div class='metric-value' style='color:#38bdf8;'>{len(res_df)}</div><span style='font-size:11px;color:#94a3b8;'>Scan Time: {t_el:.2f}s</span></div>""", unsafe_allow_html=True)
-            with k2:
-                st.markdown(f"""<div class='metric-card'><span class='metric-label'>Bullish Setups</span><div class='metric-value' style='color:#00d26a;'>{buys}</div><span style='font-size:11px;color:#94a3b8;'>🟢 BUY Divergences</span></div>""", unsafe_allow_html=True)
-            with k3:
-                st.markdown(f"""<div class='metric-card'><span class='metric-label'>Bearish Setups</span><div class='metric-value' style='color:#ef4444;'>{sells}</div><span style='font-size:11px;color:#94a3b8;'>🔴 SELL Divergences</span></div>""", unsafe_allow_html=True)
-            with k4:
-                basis_tag = st.session_state.get('sec5_active_basis', 'close').upper()
-                st.markdown(f"""<div class='metric-card'><span class='metric-label'>Active Setup</span><div class='metric-value' style='color:#fbbf24;'>{cur_tf} ({basis_tag})</div><span style='font-size:11px;color:#94a3b8;'>{scan_recency}</span></div>""", unsafe_allow_html=True)
-            
-            display_cols = [
-                'Symbol', 'Timeframe', 'Basis', 'Signal', 'Signal_Date', 'Confirm_Date',
-                'Current / Entry Price', 'Pivot Price (p)', 'RSI', 'Dynamic SL', 'SL Risk', 'Pattern'
-            ]
-            st.dataframe(res_df[display_cols], width="stretch", hide_index=True)
-            
-            st.markdown("#### 🎯 Quick-Load Into Section 3 Backtest Engine")
-            matched_symbols = sorted(res_df['Symbol'].unique().tolist())
-            qcol1, qcol2 = st.columns([2.5, 1.5])
-            with qcol1:
-                picked_stock = st.selectbox("Select Detected Stock to Analyze in Detail:", matched_symbols, key="sec5_picked_stock")
-            with qcol2:
-                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-                if st.button(f"📊 Open {picked_stock} in Section 3", key="btn_sec5_load"):
-                    st.session_state['selected_stock_override'] = picked_stock
-                    st.session_state['nav_selection_override'] = "📐 Section 3: RSI Custom Divergence Backtest"
-                    st.rerun()
-        else:
-            st.info(f"No divergence signals found on {cur_tf} matching the selected filter `{scan_recency}`.")
 
 
 # =============================================================
-# SECTION 6: AUTOMATED NIFTY DATA DOWNLOADER (1-MIN & HTF)
+# SECTION 4: AUTOMATED NIFTY DATA DOWNLOADER (1-MIN & HTF)
 # =============================================================
 def get_nifty_dataset_overview():
     """Inspects all Nifty datasets (1-Min, Daily, Weekly) and returns summary metrics."""
@@ -1049,7 +811,7 @@ def sync_nifty_htf_data(tv, tf_name, interval, full_bars=8000, sync_mode="increm
 
 
 def render_nifty_downloader_section():
-    st.header("⚡ Section 6: Nifty Automated Data Downloader & Parquet Sync")
+    st.header("⚡ Section 4: Nifty Automated Data Downloader & Parquet Sync")
     st.markdown("""
     One-click dedicated data synchronization engine for **NIFTY 50 (Spot & Index)**.
     Maintains **1-Minute Precision Spot History** (`nifty_1min_2015_2026.parquet`) and **Daily / Weekly Index Data** (`nifty_daily_data_raw.parquet`, `nifty_weekly_data_raw.parquet`).
