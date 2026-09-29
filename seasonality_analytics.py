@@ -613,23 +613,15 @@ def render_seasonality_section():
             </div>
             """, unsafe_allow_html=True)
 
-        # Full Year-by-Year Historical Return Heatmap Matrix
+        # Full Year-by-Year Historical Return Table
         st.markdown("---")
-        st.markdown("#### 🗺️ Year-by-Year Monthly Return Matrix (1996 – 2026)")
+        st.markdown(f"#### 📅 Year-by-Year Monthly Return Table ({filter_min_yr} – {filter_max_yr})")
         nifty_matrix = build_year_matrix(df_nifty)
         if not nifty_matrix.empty:
-            fig_nifty_matrix = plot_interactive_heatmap(
-                nifty_matrix,
-                title=f"NIFTY 50 Monthly Returns Matrix ({filter_min_yr} – {filter_max_yr})"
-            )
-            st.plotly_chart(fig_nifty_matrix, width="stretch")
-
-            # Data Table expander
-            with st.expander("📋 View Raw Numerical Table (Years & Returns)", expanded=False):
-                styled_df = nifty_matrix.copy()
-                for c in styled_df.columns:
-                    styled_df[c] = styled_df[c].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-")
-                st.dataframe(styled_df, width="stretch")
+            styled_df = nifty_matrix.copy()
+            for c in styled_df.columns:
+                styled_df[c] = styled_df[c].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-")
+            st.dataframe(styled_df, width="stretch")
 
     # =============================================================
     # TAB 2: SECTORAL SEASONALITY (20 SECTORS)
@@ -717,33 +709,49 @@ def render_seasonality_section():
             })
             st.dataframe(show_sec_df, width="stretch", hide_index=True)
 
-            # Full 20 Sectors x 12 Months Seasonality Heatmap
+            # Full 20 Sectors x 12 Months Seasonality Table
             st.markdown("---")
-            st.markdown("#### 🗺️ Full 12-Month Sector Seasonality Matrix (Heatmap)")
-            sec_all_m = stocks_pl.group_by(["industry", "month"]).agg([
-                pl.col("move_pct").mean().alias("avg_move"),
-                pl.col("is_positive").mean().mul(100.0).alias("pos_pct")
+            st.markdown(f"#### 📅 20 Sectors Month-by-Month Seasonality Table ({filter_min_yr} – {filter_max_yr})")
+            st.caption("Shows monthly breakdown for each sector: exact positive vs. negative counts out of total evaluated months.")
+
+            sec_yearly = stocks_pl.group_by(["industry", "year", "month"]).agg(pl.col("move_pct").mean().alias("sec_m_move"))
+            sec_m_stats = sec_yearly.group_by(["industry", "month"]).agg([
+                pl.len().alias("m_tot"),
+                (pl.col("sec_m_move") > 0).sum().alias("m_pos"),
+                (pl.col("sec_m_move") <= 0).sum().alias("m_neg"),
+                pl.col("sec_m_move").mean().alias("m_avg"),
+                ((pl.col("sec_m_move") > 0).mean() * 100.0).alias("m_pos_pct")
             ]).to_pandas()
 
-            matrix_metric = st.radio(
-                "Heatmap Metric:",
-                ["Average Monthly Return (%)", "% Positive Months (Green)"],
-                horizontal=True,
-                key="sec_heatmap_metric"
-            )
-            val_col = "avg_move" if "Average" in matrix_metric else "pos_pct"
-            sec_matrix = sec_all_m.pivot(index="industry", columns="month", values=val_col)
-            sec_matrix.columns = [MONTH_NAMES[m - 1] for m in sec_matrix.columns]
-            for m_name in MONTH_NAMES:
-                if m_name not in sec_matrix.columns:
-                    sec_matrix[m_name] = np.nan
-            sec_matrix = sec_matrix[MONTH_NAMES]
+            sec_overall = sec_yearly.group_by("industry").agg([
+                pl.len().alias("total_months"),
+                (pl.col("sec_m_move") > 0).sum().alias("pos_months_cnt"),
+                (pl.col("sec_m_move") <= 0).sum().alias("neg_months_cnt"),
+                ((pl.col("sec_m_move") > 0).mean() * 100.0).alias("overall_pos_pct"),
+                pl.col("sec_m_move").mean().alias("overall_avg_move")
+            ]).to_pandas()
 
-            fig_sec_heat = plot_sector_matrix_heatmap(
-                sec_matrix,
-                title=f"All Sectors Month-Wise {matrix_metric} ({filter_min_yr} – {filter_max_yr})"
-            )
-            st.plotly_chart(fig_sec_heat, width="stretch")
+            sec_pos = sec_m_stats.pivot(index="industry", columns="month", values="m_pos").fillna(0)
+            sec_neg = sec_m_stats.pivot(index="industry", columns="month", values="m_neg").fillna(0)
+            sec_tot = sec_m_stats.pivot(index="industry", columns="month", values="m_tot").fillna(0)
+
+            sec_table = pd.DataFrame()
+            sec_table["Sector"] = sec_overall["industry"]
+            for m_idx in range(1, 13):
+                m_name = MONTH_NAMES[m_idx - 1]
+                pos_col = sec_pos.reindex(sec_table["Sector"])[m_idx].fillna(0).astype(int) if m_idx in sec_pos.columns else 0
+                neg_col = sec_neg.reindex(sec_table["Sector"])[m_idx].fillna(0).astype(int) if m_idx in sec_neg.columns else 0
+                tot_col = sec_tot.reindex(sec_table["Sector"])[m_idx].fillna(0).astype(int) if m_idx in sec_tot.columns else 0
+                sec_table[m_name] = [
+                    f"{t} ({p} +ve, {n} -ve)" if t > 0 else "-"
+                    for p, n, t in zip(pos_col, neg_col, tot_col)
+                ]
+            sec_table["Total Months"] = sec_overall["total_months"]
+            sec_table["Positive Months"] = sec_overall.apply(lambda r: f"{r['pos_months_cnt']} ({r['overall_pos_pct']:.1f}%)", axis=1)
+            sec_table["Negative Months"] = sec_overall.apply(lambda r: f"{r['neg_months_cnt']} ({100.0 - r['overall_pos_pct']:.1f}%)", axis=1)
+            sec_table["Overall Avg Move"] = sec_overall["overall_avg_move"].apply(lambda x: f"{x:+.2f}%")
+
+            st.dataframe(sec_table, width="stretch", hide_index=True)
 
             # Sector Drill-down
             st.markdown("---")
@@ -793,21 +801,24 @@ def render_seasonality_section():
             st.warning("Stock monthly parquets not found.")
         else:
             # Universe Selection Bar
-            u_col1, u_col2, u_col3 = st.columns([2.0, 2.0, 2.0])
+            u_col1, u_col2, u_col3 = st.columns([2.2, 1.8, 2.0])
             with u_col1:
                 scope_choice = st.radio(
-                    "🎯 Select Stock Universe:",
+                    "🎯 Select Asset Universe:",
                     [
+                        "🌟 Combined (Index + Sectors + Nifty 50 Stocks)",
                         "🎯 NIFTY 50 Constituents (50 Stocks)",
-                        "🏢 Sectoral / Industry Group",
-                        "🌐 All 500 Nifty Equities"
+                        "📈 NIFTY 50 Benchmark Index",
+                        "🏢 20 Market Sectors",
+                        "🌐 All 500 Nifty Equities",
+                        "📂 Specific Sector Constituents"
                     ],
                     index=0,
                     key="sec4_stock_scope"
                 )
 
             with u_col2:
-                if "Sectoral" in scope_choice:
+                if "Specific Sector" in scope_choice:
                     all_sectors_list = sorted(stocks_pl["industry"].unique().to_list())
                     chosen_sec_filter = st.selectbox(
                         "🏢 Pick Industry / Sector:",
@@ -819,7 +830,7 @@ def render_seasonality_section():
                     chosen_sec_filter = None
                     st.markdown("""
                     <div style="font-size:12px; color:#94a3b8; margin-top:28px;">
-                        Filter active: <strong>Nifty 50</strong> or <strong>All Equities</strong>.
+                        Quick Universe: <strong>Combined</strong>, <strong>Nifty 50</strong>, <strong>Index</strong>, <strong>Sectors</strong>, or <strong>All Equities</strong>.
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -834,11 +845,20 @@ def render_seasonality_section():
                     key="sec4_stock_view_mode"
                 )
 
-            # Filter stocks_pl based on scope_choice
-            if "NIFTY 50" in scope_choice:
+            # Filter stocks_pl for Single Month Detail or specific scoped logic
+            if "Combined" in scope_choice:
+                scoped_stocks_pl = stocks_pl.filter(pl.col("is_nifty50"))
+                scope_label = "Combined Master Universe (Index, Sectors & Stocks)"
+            elif "NIFTY 50 Constituents" in scope_choice:
                 scoped_stocks_pl = stocks_pl.filter(pl.col("is_nifty50"))
                 scope_label = "Nifty 50 Constituents"
-            elif "Sectoral" in scope_choice and chosen_sec_filter:
+            elif "Benchmark Index" in scope_choice:
+                scoped_stocks_pl = stocks_pl.filter(pl.col("is_nifty50"))
+                scope_label = "NIFTY 50 Benchmark Index"
+            elif "20 Market Sectors" in scope_choice:
+                scoped_stocks_pl = stocks_pl
+                scope_label = "20 Market Sectors"
+            elif "Specific Sector" in scope_choice and chosen_sec_filter:
                 scoped_stocks_pl = stocks_pl.filter(pl.col("industry") == chosen_sec_filter)
                 scope_label = f"Sector: {chosen_sec_filter}"
             else:
@@ -852,54 +872,133 @@ def render_seasonality_section():
                 st.markdown(f"#### 📅 12-Month Performance Matrix for **{scope_label}**")
                 st.markdown("Shows monthly breakdown for each calendar month (Jan–Dec): exact positive vs. negative counts out of total evaluated months, and overall full-year performance statistics.")
 
-                # Overall stats per stock across all months
-                overall_stats = scoped_stocks_pl.group_by(["symbol", "company_name", "industry"]).agg([
-                    pl.len().alias("total_months"),
-                    (pl.col("move_pct") > 0).sum().alias("pos_months_cnt"),
-                    (pl.col("move_pct") <= 0).sum().alias("neg_months_cnt"),
-                    ((pl.col("move_pct") > 0).mean() * 100.0).alias("overall_pos_pct"),
-                    pl.col("move_pct").mean().alias("overall_avg_move")
-                ]).to_pandas()
+                matrix_dfs = []
 
-                # Month-wise statistics per stock (pos count, neg count, total count, avg move, pos %)
-                m_stats_pl = scoped_stocks_pl.group_by(["symbol", "month"]).agg([
-                    pl.len().alias("m_tot"),
-                    (pl.col("move_pct") > 0).sum().alias("m_pos"),
-                    (pl.col("move_pct") <= 0).sum().alias("m_neg"),
-                    pl.col("move_pct").mean().alias("m_avg"),
-                    ((pl.col("move_pct") > 0).mean() * 100.0).alias("m_pos_pct")
-                ]).to_pandas()
+                # Part 1: NIFTY 50 Benchmark Index
+                if ("Combined" in scope_choice or "Benchmark Index" in scope_choice) and not df_nifty.empty:
+                    n_agg = df_nifty.groupby('month').agg(
+                        m_tot=('move_pct', 'count'),
+                        m_pos=('move_pct', lambda s: (s > 0).sum()),
+                        m_neg=('move_pct', lambda s: (s <= 0).sum()),
+                        m_avg=('move_pct', 'mean'),
+                        m_pos_pct=('move_pct', lambda s: (s > 0).mean() * 100.0)
+                    ).reset_index()
 
-                # Pivot metrics across 12 months
-                pivot_pos = m_stats_pl.pivot(index="symbol", columns="month", values="m_pos").fillna(0)
-                pivot_neg = m_stats_pl.pivot(index="symbol", columns="month", values="m_neg").fillna(0)
-                pivot_tot = m_stats_pl.pivot(index="symbol", columns="month", values="m_tot").fillna(0)
-                pivot_avg = m_stats_pl.pivot(index="symbol", columns="month", values="m_avg")
-                pivot_pct = m_stats_pl.pivot(index="symbol", columns="month", values="m_pos_pct")
+                    tot_all = len(df_nifty)
+                    pos_all = int((df_nifty['move_pct'] > 0).sum())
+                    neg_all = int((df_nifty['move_pct'] <= 0).sum())
+                    pos_pct_all = (pos_all / tot_all * 100.0) if tot_all > 0 else 0.0
+                    avg_all = df_nifty['move_pct'].mean()
 
-                for m_idx in range(1, 13):
-                    if m_idx not in pivot_pos.columns:
-                        pivot_pos[m_idx] = 0
-                    if m_idx not in pivot_neg.columns:
-                        pivot_neg[m_idx] = 0
-                    if m_idx not in pivot_tot.columns:
-                        pivot_tot[m_idx] = 0
-                    if m_idx not in pivot_avg.columns:
-                        pivot_avg[m_idx] = np.nan
-                    if m_idx not in pivot_pct.columns:
-                        pivot_pct[m_idx] = np.nan
+                    n_row = {
+                        'Name': 'NIFTY 50',
+                        'company_name': 'NIFTY 50 Benchmark Index',
+                        'Type / Sector': 'Benchmark Index',
+                        'total_months': tot_all,
+                        'pos_months_cnt': pos_all,
+                        'neg_months_cnt': neg_all,
+                        'overall_pos_pct': pos_pct_all,
+                        'overall_avg_move': avg_all
+                    }
+                    for m_idx in range(1, 13):
+                        m_name = MONTH_NAMES[m_idx - 1]
+                        sub = n_agg[n_agg['month'] == m_idx]
+                        if not sub.empty:
+                            n_row[f'{m_name}_tot'] = int(sub['m_tot'].iloc[0])
+                            n_row[f'{m_name}_pos'] = int(sub['m_pos'].iloc[0])
+                            n_row[f'{m_name}_neg'] = int(sub['m_neg'].iloc[0])
+                            n_row[f'{m_name}_avg'] = float(sub['m_avg'].iloc[0])
+                            n_row[f'{m_name}_pos_pct'] = float(sub['m_pos_pct'].iloc[0])
+                        else:
+                            n_row[f'{m_name}_tot'] = 0
+                            n_row[f'{m_name}_pos'] = 0
+                            n_row[f'{m_name}_neg'] = 0
+                            n_row[f'{m_name}_avg'] = np.nan
+                            n_row[f'{m_name}_pos_pct'] = np.nan
+                    matrix_dfs.append(pd.DataFrame([n_row]))
 
-                # Construct merged matrix with raw numeric data for sorting & formatting
-                merged_matrix = overall_stats.copy().set_index("symbol")
-                for m_idx in range(1, 13):
-                    m_name = MONTH_NAMES[m_idx - 1]
-                    merged_matrix[f"{m_name}_pos"] = pivot_pos[m_idx].astype(int)
-                    merged_matrix[f"{m_name}_neg"] = pivot_neg[m_idx].astype(int)
-                    merged_matrix[f"{m_name}_tot"] = pivot_tot[m_idx].astype(int)
-                    merged_matrix[f"{m_name}_avg"] = pivot_avg[m_idx]
-                    merged_matrix[f"{m_name}_pos_pct"] = pivot_pct[m_idx]
+                # Part 2: Market Sectors (20 Sectors)
+                if ("Combined" in scope_choice or "20 Market Sectors" in scope_choice) and not stocks_pl.is_empty():
+                    sec_yearly = stocks_pl.group_by(["industry", "year", "month"]).agg(pl.col("move_pct").mean().alias("sec_m_move"))
+                    sec_m_stats = sec_yearly.group_by(["industry", "month"]).agg([
+                        pl.len().alias("m_tot"),
+                        (pl.col("sec_m_move") > 0).sum().alias("m_pos"),
+                        (pl.col("sec_m_move") <= 0).sum().alias("m_neg"),
+                        pl.col("sec_m_move").mean().alias("m_avg"),
+                        ((pl.col("sec_m_move") > 0).mean() * 100.0).alias("m_pos_pct")
+                    ]).to_pandas()
 
-                merged_matrix = merged_matrix.reset_index()
+                    sec_overall = sec_yearly.group_by("industry").agg([
+                        pl.len().alias("total_months"),
+                        (pl.col("sec_m_move") > 0).sum().alias("pos_months_cnt"),
+                        (pl.col("sec_m_move") <= 0).sum().alias("neg_months_cnt"),
+                        ((pl.col("sec_m_move") > 0).mean() * 100.0).alias("overall_pos_pct"),
+                        pl.col("sec_m_move").mean().alias("overall_avg_move")
+                    ]).to_pandas()
+
+                    sec_pos = sec_m_stats.pivot(index="industry", columns="month", values="m_pos").fillna(0)
+                    sec_neg = sec_m_stats.pivot(index="industry", columns="month", values="m_neg").fillna(0)
+                    sec_tot = sec_m_stats.pivot(index="industry", columns="month", values="m_tot").fillna(0)
+                    sec_avg = sec_m_stats.pivot(index="industry", columns="month", values="m_avg")
+                    sec_pct = sec_m_stats.pivot(index="industry", columns="month", values="m_pos_pct")
+
+                    sec_matrix = sec_overall.set_index("industry")
+                    sec_matrix["Name"] = sec_matrix.index
+                    sec_matrix["company_name"] = sec_matrix.index
+                    sec_matrix["Type / Sector"] = "Market Sector"
+                    for m_idx in range(1, 13):
+                        m_name = MONTH_NAMES[m_idx - 1]
+                        sec_matrix[f"{m_name}_pos"] = sec_pos[m_idx].astype(int) if m_idx in sec_pos.columns else 0
+                        sec_matrix[f"{m_name}_neg"] = sec_neg[m_idx].astype(int) if m_idx in sec_neg.columns else 0
+                        sec_matrix[f"{m_name}_tot"] = sec_tot[m_idx].astype(int) if m_idx in sec_tot.columns else 0
+                        sec_matrix[f"{m_name}_avg"] = sec_avg[m_idx] if m_idx in sec_avg.columns else np.nan
+                        sec_matrix[f"{m_name}_pos_pct"] = sec_pct[m_idx] if m_idx in sec_pct.columns else np.nan
+                    matrix_dfs.append(sec_matrix.reset_index(drop=True))
+
+                # Part 3: Individual Stocks
+                if ("Combined" in scope_choice or "Constituents" in scope_choice or "All 500" in scope_choice or "Specific Sector" in scope_choice) and not stocks_pl.is_empty():
+                    if "Combined" in scope_choice or "NIFTY 50 Constituents" in scope_choice:
+                        stk_pl = stocks_pl.filter(pl.col("is_nifty50"))
+                    elif "Specific Sector" in scope_choice and chosen_sec_filter:
+                        stk_pl = stocks_pl.filter(pl.col("industry") == chosen_sec_filter)
+                    else:
+                        stk_pl = stocks_pl
+
+                    overall_stats = stk_pl.group_by(["symbol", "company_name", "industry"]).agg([
+                        pl.len().alias("total_months"),
+                        (pl.col("move_pct") > 0).sum().alias("pos_months_cnt"),
+                        (pl.col("move_pct") <= 0).sum().alias("neg_months_cnt"),
+                        ((pl.col("move_pct") > 0).mean() * 100.0).alias("overall_pos_pct"),
+                        pl.col("move_pct").mean().alias("overall_avg_move")
+                    ]).to_pandas()
+
+                    m_stats_pl = stk_pl.group_by(["symbol", "month"]).agg([
+                        pl.len().alias("m_tot"),
+                        (pl.col("move_pct") > 0).sum().alias("m_pos"),
+                        (pl.col("move_pct") <= 0).sum().alias("m_neg"),
+                        pl.col("move_pct").mean().alias("m_avg"),
+                        ((pl.col("move_pct") > 0).mean() * 100.0).alias("m_pos_pct")
+                    ]).to_pandas()
+
+                    pivot_pos = m_stats_pl.pivot(index="symbol", columns="month", values="m_pos").fillna(0)
+                    pivot_neg = m_stats_pl.pivot(index="symbol", columns="month", values="m_neg").fillna(0)
+                    pivot_tot = m_stats_pl.pivot(index="symbol", columns="month", values="m_tot").fillna(0)
+                    pivot_avg = m_stats_pl.pivot(index="symbol", columns="month", values="m_avg")
+                    pivot_pct = m_stats_pl.pivot(index="symbol", columns="month", values="m_pos_pct")
+
+                    stk_matrix = overall_stats.set_index("symbol")
+                    stk_matrix["Name"] = stk_matrix.index
+                    stk_matrix["Type / Sector"] = stk_matrix["industry"]
+                    for m_idx in range(1, 13):
+                        m_name = MONTH_NAMES[m_idx - 1]
+                        stk_matrix[f"{m_name}_pos"] = pivot_pos[m_idx].astype(int) if m_idx in pivot_pos.columns else 0
+                        stk_matrix[f"{m_name}_neg"] = pivot_neg[m_idx].astype(int) if m_idx in pivot_neg.columns else 0
+                        stk_matrix[f"{m_name}_tot"] = pivot_tot[m_idx].astype(int) if m_idx in pivot_tot.columns else 0
+                        stk_matrix[f"{m_name}_avg"] = pivot_avg[m_idx] if m_idx in pivot_avg.columns else np.nan
+                        stk_matrix[f"{m_name}_pos_pct"] = pivot_pct[m_idx] if m_idx in pivot_pct.columns else np.nan
+                    matrix_dfs.append(stk_matrix.reset_index(drop=True))
+
+                merged_matrix = pd.concat(matrix_dfs, ignore_index=True) if matrix_dfs else pd.DataFrame()
 
                 # Controls above table
                 c_sort1, c_sort2, c_fmt, c_search = st.columns([1.5, 1.4, 1.8, 1.8])
@@ -914,86 +1013,90 @@ def render_seasonality_section():
                     sort_m_dir = st.radio("Sort Order:", ["Highest to Lowest", "Lowest to Highest"], horizontal=True, key="sec4_matrix_sort_dir")
                 with c_fmt:
                     fmt_choice = st.selectbox(
-                        "Month Columns Format:",
+                        "Month Cell Display Format:",
                         [
-                            "🟢 Pos / 🔴 Neg (Total Count)  [18🟢 / 7🔴 (25)]",
-                            "🟢 Pos / 🔴 Neg (Total) + Move %  [18🟢 / 7🔴 (25) • +2.1%]",
-                            "Move % + Counts  [+2.1% (18🟢/7🔴)]",
-                            "Move % Only  [+2.1%]"
+                            "total (+ve, -ve)  [e.g. 25 (16 +ve, 9 -ve)]",
+                            "total (+ve🟢, -ve🔴)  [e.g. 25 (16🟢 +ve, 9🔴 -ve)]",
+                            "total (+ve, -ve) + Move %  [e.g. 25 (16 +ve, 9 -ve) • +2.1%]",
+                            "Move % Only  [e.g. +2.1%]"
                         ],
                         index=0,
                         key="sec4_matrix_fmt_choice"
                     )
                 with c_search:
-                    search_q = st.text_input("🔍 Search Stock Symbol or Name:", "", key="sec4_matrix_search_q")
+                    search_q = st.text_input("🔍 Search Name (Stock / Sector / Nifty):", "", key="sec4_matrix_search_q")
 
-                if search_q:
+                if search_q and not merged_matrix.empty:
                     q_lower = search_q.strip().lower()
+                    name_s = merged_matrix['Name'].astype(str).str.lower()
+                    type_s = merged_matrix['Type / Sector'].astype(str).str.lower()
+                    comp_s = merged_matrix.get('company_name', pd.Series(dtype=str)).fillna('').astype(str).str.lower()
                     merged_matrix = merged_matrix[
-                        merged_matrix['symbol'].str.lower().str.contains(q_lower) |
-                        merged_matrix['company_name'].str.lower().str.contains(q_lower)
+                        name_s.str.contains(q_lower) |
+                        type_s.str.contains(q_lower) |
+                        comp_s.str.contains(q_lower)
                     ]
 
                 # Sorting logic
                 asc = (sort_m_dir == "Lowest to Highest")
-                if sort_m_col == "Overall Positive %":
-                    merged_matrix = merged_matrix.sort_values("overall_pos_pct", ascending=asc)
-                elif sort_m_col == "Overall Avg Move %":
-                    merged_matrix = merged_matrix.sort_values("overall_avg_move", ascending=asc)
-                elif sort_m_col == "Total Months":
-                    merged_matrix = merged_matrix.sort_values("total_months", ascending=asc)
-                elif sort_m_col in MONTH_NAMES:
-                    # Sort primarily by the month's positive %, tie-break by average move
-                    merged_matrix = merged_matrix.sort_values(
-                        by=[f"{sort_m_col}_pos_pct", f"{sort_m_col}_avg"],
-                        ascending=[asc, asc]
-                    )
+                if not merged_matrix.empty:
+                    if sort_m_col == "Overall Positive %":
+                        merged_matrix = merged_matrix.sort_values("overall_pos_pct", ascending=asc)
+                    elif sort_m_col == "Overall Avg Move %":
+                        merged_matrix = merged_matrix.sort_values("overall_avg_move", ascending=asc)
+                    elif sort_m_col == "Total Months":
+                        merged_matrix = merged_matrix.sort_values("total_months", ascending=asc)
+                    elif sort_m_col in MONTH_NAMES:
+                        merged_matrix = merged_matrix.sort_values(
+                            by=[f"{sort_m_col}_pos_pct", f"{sort_m_col}_avg"],
+                            ascending=[asc, asc]
+                        )
 
                 # Format DataFrame for display
                 display_matrix = pd.DataFrame()
-                display_matrix["Symbol"] = merged_matrix["symbol"]
-                display_matrix["Company Name"] = merged_matrix["company_name"]
-                display_matrix["Sector"] = merged_matrix["industry"]
+                if not merged_matrix.empty:
+                    display_matrix["Name"] = merged_matrix["Name"]
 
-                # Populate Month columns based on user format choice
-                for m_idx in range(1, 13):
-                    m_name = MONTH_NAMES[m_idx - 1]
-                    pos_s = merged_matrix[f"{m_name}_pos"]
-                    neg_s = merged_matrix[f"{m_name}_neg"]
-                    tot_s = merged_matrix[f"{m_name}_tot"]
-                    avg_s = merged_matrix[f"{m_name}_avg"]
+                    # Populate Month columns based on user format choice
+                    for m_idx in range(1, 13):
+                        m_name = MONTH_NAMES[m_idx - 1]
+                        pos_s = merged_matrix[f"{m_name}_pos"]
+                        neg_s = merged_matrix[f"{m_name}_neg"]
+                        tot_s = merged_matrix[f"{m_name}_tot"]
+                        avg_s = merged_matrix[f"{m_name}_avg"]
 
-                    if "Total Count)  [18🟢" in fmt_choice:
-                        # 18🟢 / 7🔴 (25)
-                        display_matrix[m_name] = [
-                            f"{p}🟢 / {n}🔴 ({t})" if t > 0 else "-"
-                            for p, n, t in zip(pos_s, neg_s, tot_s)
-                        ]
-                    elif "+ Move %  [18🟢" in fmt_choice:
-                        # 18🟢 / 7🔴 (25) • +2.1%
-                        display_matrix[m_name] = [
-                            f"{p}🟢 / {n}🔴 ({t}) • {a:+.1f}%" if t > 0 and pd.notna(a) else (f"{p}🟢 / {n}🔴 ({t})" if t > 0 else "-")
-                            for p, n, t, a in zip(pos_s, neg_s, tot_s, avg_s)
-                        ]
-                    elif "Move % + Counts" in fmt_choice:
-                        # +2.1% (18🟢/7🔴)
-                        display_matrix[m_name] = [
-                            f"{a:+.1f}% ({p}🟢/{n}🔴)" if t > 0 and pd.notna(a) else "-"
-                            for p, n, t, a in zip(pos_s, neg_s, tot_s, avg_s)
-                        ]
-                    else:
-                        # Move % Only
-                        display_matrix[m_name] = [
-                            f"{a:+.2f}%" if t > 0 and pd.notna(a) else "-"
-                            for t, a in zip(tot_s, avg_s)
-                        ]
+                        if "total (+ve, -ve)" in fmt_choice:
+                            # Exact format requested: total month (+ve month, -ve month)
+                            display_matrix[m_name] = [
+                                f"{t} ({p} +ve, {n} -ve)" if t > 0 else "-"
+                                for p, n, t in zip(pos_s, neg_s, tot_s)
+                            ]
+                        elif "(+ve🟢, -ve🔴)" in fmt_choice:
+                            # 25 (16🟢 +ve, 9🔴 -ve)
+                            display_matrix[m_name] = [
+                                f"{t} ({p}🟢 +ve, {n}🔴 -ve)" if t > 0 else "-"
+                                for p, n, t in zip(pos_s, neg_s, tot_s)
+                            ]
+                        elif "+ Move %" in fmt_choice:
+                            # 25 (16 +ve, 9 -ve) • +2.1%
+                            display_matrix[m_name] = [
+                                f"{t} ({p} +ve, {n} -ve) • {a:+.1f}%" if t > 0 and pd.notna(a) else (f"{t} ({p} +ve, {n} -ve)" if t > 0 else "-")
+                                for p, n, t, a in zip(pos_s, neg_s, tot_s, avg_s)
+                            ]
+                        else:
+                            # Move % Only
+                            display_matrix[m_name] = [
+                                f"{a:+.2f}%" if t > 0 and pd.notna(a) else "-"
+                                for t, a in zip(tot_s, avg_s)
+                            ]
 
-                display_matrix["Total Months"] = merged_matrix["total_months"]
-                display_matrix["Positive Months"] = merged_matrix.apply(lambda r: f"{r['pos_months_cnt']}🟢 ({r['overall_pos_pct']:.1f}%)", axis=1)
-                display_matrix["Negative Months"] = merged_matrix.apply(lambda r: f"{r['neg_months_cnt']}🔴 ({100.0 - r['overall_pos_pct']:.1f}%)", axis=1)
-                display_matrix["Overall Avg Move"] = merged_matrix["overall_avg_move"].apply(lambda x: f"{x:+.2f}%")
+                    display_matrix["Total Months"] = merged_matrix["total_months"]
+                    display_matrix["Positive Months"] = merged_matrix.apply(lambda r: f"{r['pos_months_cnt']} ({r['overall_pos_pct']:.1f}%)", axis=1)
+                    display_matrix["Negative Months"] = merged_matrix.apply(lambda r: f"{r['neg_months_cnt']} ({100.0 - r['overall_pos_pct']:.1f}%)", axis=1)
+                    display_matrix["Overall Avg Move"] = merged_matrix["overall_avg_move"].apply(lambda x: f"{x:+.2f}%")
+                    display_matrix["Type / Sector"] = merged_matrix["Type / Sector"]
 
-                st.caption("💡 **Month Columns Data:** Shows **Positive🟢 / Negative🔴 (Total Months Evaluated)** for each calendar month. Change the format selector above if you want to include the Average Move %.")
+                st.caption("💡 **Month Columns Data:** Displays **`total month (+ve month, -ve month)`** as requested (e.g. 25 (16 +ve, 9 -ve)).")
                 st.dataframe(display_matrix, width="stretch", hide_index=True)
 
             # -------------------------------------------------------------
@@ -1191,19 +1294,12 @@ def render_seasonality_section():
                 )
                 st.plotly_chart(fig_stk_bars, width="stretch")
 
-                # Year-by-Year Historical Return Heatmap Matrix
+                # Year-by-Year Historical Return Table
                 st.markdown("---")
-                st.markdown(f"#### 🗺️ {picked_sym} Year-by-Year Monthly Return Matrix (%)")
+                st.markdown(f"#### 📅 {picked_sym} Year-by-Year Monthly Return Table (%)")
                 stk_matrix = build_year_matrix(stock_pl_sub)
                 if not stk_matrix.empty:
-                    fig_stk_matrix = plot_interactive_heatmap(
-                        stk_matrix,
-                        title=f"{picked_sym} Monthly Returns Matrix ({filter_min_yr} – {filter_max_yr})"
-                    )
-                    st.plotly_chart(fig_stk_matrix, width="stretch")
-
-                    with st.expander(f"📋 View Numerical Return Matrix for {picked_sym}", expanded=False):
-                        s_df = stk_matrix.copy()
-                        for c in s_df.columns:
-                            s_df[c] = s_df[c].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-")
-                        st.dataframe(s_df, width="stretch")
+                    s_df = stk_matrix.copy()
+                    for c in s_df.columns:
+                        s_df[c] = s_df[c].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-")
+                    st.dataframe(s_df, width="stretch")
