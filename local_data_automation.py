@@ -8,6 +8,9 @@ across Nifty 50 (1-Min Spot, Daily, Weekly) and all 500 Nifty Equities.
 import os
 import time
 import shutil
+import zipfile
+import io
+import subprocess
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -954,6 +957,162 @@ def render_nifty_downloader_section(is_subtab=False):
 
 
 # =============================================================
+# CLOUD ⇄ LOCAL DATA SYNC (ZIP EXPORT & IMPORT)
+# =============================================================
+def create_data_zip_bytes(include_nifty=True, include_stocks=True):
+    """Packages data parquets into a compressed zip byte buffer."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if include_nifty:
+            if os.path.exists(LOCAL_NIFTY_1MIN_FILE):
+                zf.write(LOCAL_NIFTY_1MIN_FILE, os.path.relpath(LOCAL_NIFTY_1MIN_FILE, BASE_DIR))
+            if os.path.exists(LOCAL_NIFTY_HTF_DIR):
+                for root, _, files in os.walk(LOCAL_NIFTY_HTF_DIR):
+                    for f in files:
+                        if f.endswith(".parquet"):
+                            p = os.path.join(root, f)
+                            zf.write(p, os.path.relpath(p, BASE_DIR))
+        if include_stocks:
+            for s_dir in [LOCAL_STOCK_DAILY_DIR, LOCAL_STOCK_WEEKLY_DIR, LOCAL_STOCK_MONTHLY_DIR]:
+                if os.path.exists(s_dir):
+                    for f in os.listdir(s_dir):
+                        if f.endswith(".parquet"):
+                            p = os.path.join(s_dir, f)
+                            zf.write(p, os.path.relpath(p, BASE_DIR))
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def render_data_sync_zip_section(is_subtab=False):
+    """Renders Cloud ⇄ Local ZIP data transfer and Git Protection UI."""
+    if not is_subtab:
+        st.header("📦 Cloud ⇄ Local Data Backup & Synchronization")
+    else:
+        st.subheader("📦 Cloud ⇄ Local Data Sync (ZIP Backup & Git Protection)")
+        
+    st.markdown("""
+    Easily transfer updated parquet data between **Streamlit Cloud** and your **Local PC** without risking Git overwrites:
+    - **Step 1 (On Streamlit Cloud):** After downloading fresh data in Section 3, generate and download the Data ZIP.
+    - **Step 2 (On Local PC):** Upload the ZIP here to instantly apply the updated parquets to your local environment.
+    """)
+    
+    col_exp, col_imp = st.columns(2)
+    
+    with col_exp:
+        st.markdown("#### 📤 1. Export Data to ZIP")
+        zip_scope = st.radio(
+            "Select Data Scope to Export:",
+            [
+                "🌟 Complete Dataset (Nifty Spot/Index + All Stocks)",
+                "⚡ NIFTY Index & Spot Only (1-Min, Daily, Weekly)",
+                "🏢 Stocks Parquets Only (Daily, Weekly, Monthly)"
+            ],
+            key="zip_export_scope"
+        )
+        
+        inc_n = "Nifty" in zip_scope or "Complete" in zip_scope
+        inc_s = "Stocks" in zip_scope or "Complete" in zip_scope
+        
+        if st.button("📦 Generate Downloadable ZIP Archive", type="primary", key="btn_gen_zip"):
+            with st.spinner("Compressing parquet files into ZIP archive..."):
+                zip_bytes = create_data_zip_bytes(include_nifty=inc_n, include_stocks=inc_s)
+                st.session_state['ready_zip_bytes'] = zip_bytes
+                size_mb = len(zip_bytes) / (1024 * 1024)
+                st.success(f"✅ Archive ready! Compressed size: **{size_mb:.1f} MB**")
+                
+        if 'ready_zip_bytes' in st.session_state:
+            st.download_button(
+                label="⬇️ Download Market Data ZIP",
+                data=st.session_state['ready_zip_bytes'],
+                file_name=f"nifty_market_data_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.zip",
+                mime="application/zip",
+                key="btn_dl_zip"
+            )
+            
+    with col_imp:
+        st.markdown("#### 📥 2. Import Data from ZIP")
+        st.markdown("Upload a previously exported data ZIP file to extract and update parquet files directly in `data/`:")
+        
+        uploaded_zip = st.file_uploader("Upload Market Data ZIP:", type=["zip"], key="zip_uploader")
+        if uploaded_zip is not None:
+            if st.button("🚀 Extract & Apply to Local Data Folder", key="btn_apply_zip"):
+                with st.spinner("Extracting and updating parquet files..."):
+                    extracted_count = 0
+                    try:
+                        with zipfile.ZipFile(uploaded_zip, "r") as zf:
+                            for member in zf.infolist():
+                                target_path = os.path.normpath(os.path.join(BASE_DIR, member.filename))
+                                if target_path.startswith(BASE_DIR) and not member.is_dir():
+                                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                                    with zf.open(member) as source, open(target_path, "wb") as target:
+                                        shutil.copyfileobj(source, target)
+                                    extracted_count += 1
+                        st.cache_data.clear()
+                        st.success(f"🎉 Successfully extracted and updated **{extracted_count}** parquet files! App caches refreshed.")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Failed to extract archive: {e}")
+                        
+    # Git Protection Helper
+    st.markdown("---")
+    st.markdown("#### 🛡️ Git Protection Status (Safe Mode)")
+    st.markdown("""
+    When **Safe Mode** is active, all 1,505 parquet files in `data/` are marked as `assume-unchanged` in Git.
+    This guarantees that whenever you run `git add .` and `git push`, your local files will **NEVER** overwrite newer data on GitHub or Streamlit Cloud!
+    """)
+    
+    # Check lock status
+    try:
+        res_v = subprocess.check_output(["git", "ls-files", "-v", "data/"], cwd=BASE_DIR, text=True)
+        locked_cnt = sum(1 for l in res_v.splitlines() if l and l[0].islower())
+        total_cnt = len(res_v.splitlines())
+    except Exception:
+        locked_cnt = 0
+        total_cnt = 0
+        
+    g_col1, g_col2 = st.columns([3.5, 2.5])
+    with g_col1:
+        if locked_cnt > 0:
+            st.markdown(f"""
+            <div style="background: rgba(0, 210, 106, 0.08); border: 1px solid rgba(0, 210, 106, 0.3); padding: 10px 14px; border-radius: 8px;">
+                <strong style="color: #00d26a; font-size: 14px;">🟢 SAFE MODE IS ACTIVE ({locked_cnt} / {total_cnt} Files Protected)</strong><br>
+                <span style="font-size: 12px; color: #cbd5e1;">Local parquet modifications will be completely ignored by Git. Your code commits are safe to push!</span>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="background: rgba(244, 63, 94, 0.08); border: 1px solid rgba(244, 63, 94, 0.3); padding: 10px 14px; border-radius: 8px;">
+                <strong style="color: #f43f5e; font-size: 14px;">⚠️ SAFE MODE IS OFF ({locked_cnt} / {total_cnt} Files Protected)</strong><br>
+                <span style="font-size: 12px; color: #cbd5e1;">Warning: Staging all files might push older local data to GitHub and reset Streamlit Cloud.</span>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    with g_col2:
+        btn_lock_c1, btn_lock_c2 = st.columns(2)
+        with btn_lock_c1:
+            if st.button("🔒 Turn On Safe Mode", key="btn_ui_lock"):
+                try:
+                    import manage_git_data
+                    manage_git_data.lock_data()
+                    st.success("Safe mode activated!")
+                    time.sleep(0.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        with btn_lock_c2:
+            if st.button("🔓 Prepare to Push Data", key="btn_ui_unlock"):
+                try:
+                    import manage_git_data
+                    manage_git_data.unlock_data()
+                    st.warning("Data unlocked for pushing.")
+                    time.sleep(0.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+
+# =============================================================
 # UNIFIED DOWNLOADER SECTION (NIFTY & STOCKS MERGED)
 # =============================================================
 def render_unified_downloader_section():
@@ -963,9 +1122,10 @@ def render_unified_downloader_section():
     Downloads directly from TradingView, converts in-memory to **Apache Parquet**, and automatically synchronizes to local and deployment data directories.
     """)
     
-    d_tab1, d_tab2 = st.tabs([
+    d_tab1, d_tab2, d_tab3 = st.tabs([
         "⚡ NIFTY 50 Index & Spot (1-Min, Daily, Weekly)",
-        "🏢 NIFTY 500 Equities Batch Downloader (500 Stocks)"
+        "🏢 NIFTY 500 Equities Batch Downloader (500 Stocks)",
+        "📦 Cloud ⇄ Local Sync (ZIP Backup & Git Safe Mode)"
     ])
     
     with d_tab1:
@@ -973,4 +1133,8 @@ def render_unified_downloader_section():
         
     with d_tab2:
         render_downloader_section(is_subtab=True)
+
+    with d_tab3:
+        render_data_sync_zip_section(is_subtab=True)
+
 
