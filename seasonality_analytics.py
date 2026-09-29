@@ -633,162 +633,277 @@ def render_seasonality_section():
         if stocks_pl.is_empty():
             st.warning("Stock monthly parquets not found. Please sync stocks in Section 3.")
         else:
-            # Month Selection for Sector Breakdown
-            sec_col1, sec_col2, sec_col3 = st.columns([1.8, 1.8, 2.4])
-            with sec_col1:
-                cur_month_idx = pd.Timestamp.now().month
-                chosen_sec_month_name = st.selectbox(
-                    "📅 Select Calendar Month:",
-                    MONTH_FULL_NAMES,
-                    index=cur_month_idx - 1,
-                    key="sec_chosen_month"
-                )
-                chosen_sec_month = MONTH_FULL_NAMES.index(chosen_sec_month_name) + 1
+            sec_view_mode = st.radio(
+                "📊 Choose Display View:",
+                [
+                    "📅 Month-by-Month Full Matrix (Jan – Dec)",
+                    "🎯 Single Month Sector Detail"
+                ],
+                index=0,
+                horizontal=True,
+                key="sec_tab_view_mode"
+            )
 
-            with sec_col2:
-                sort_sec_by = st.selectbox(
-                    "Rank Sectors By:",
-                    ["Average Move (%)", "% Positive Months", "Median Move (%)"],
-                    index=0,
-                    key="sec_sort_by"
-                )
+            # =========================================================
+            # VIEW 1: 12-MONTH FULL MATRIX (JAN – DEC)
+            # =========================================================
+            if "Month-by-Month Full Matrix" in sec_view_mode:
+                st.markdown(f"#### 📅 20 Sectors Month-by-Month Seasonality Table ({filter_min_yr} – {filter_max_yr})")
+                st.caption("Shows monthly breakdown for each sector: exact positive vs. negative counts out of total evaluated months.")
 
-            with sec_col3:
-                st.markdown(f"""
-                <div style="font-size:12px; color:#94a3b8; margin-top:24px;">
-                    Evaluating performance of <strong>500 stocks</strong> across <strong>{span_years} years</strong> for <strong>{chosen_sec_month_name}</strong>.
-                </div>
-                """, unsafe_allow_html=True)
+                # 1. 20 Sectors Matrix
+                sec_yearly = stocks_pl.group_by(["industry", "year", "month"]).agg(pl.col("move_pct").mean().alias("sec_m_move"))
+                sec_m_stats = sec_yearly.group_by(["industry", "month"]).agg([
+                    pl.len().alias("m_tot"),
+                    (pl.col("sec_m_move") > 0).sum().alias("m_pos"),
+                    (pl.col("sec_m_move") <= 0).sum().alias("m_neg"),
+                    ((pl.col("sec_m_move") > 0).mean() * 100.0).alias("m_pos_pct")
+                ]).to_pandas()
 
-            # Compute Sector stats for chosen month
-            stocks_m = stocks_pl.filter(pl.col("month") == chosen_sec_month)
-            sec_stats = stocks_m.group_by("industry").agg([
-                pl.len().alias("sample_candles"),
-                pl.col("symbol").n_unique().alias("stocks_in_sector"),
-                (pl.col("move_pct") > 0).sum().alias("pos_candles"),
-                (pl.col("move_pct") <= 0).sum().alias("neg_candles"),
-                pl.col("is_positive").mean().mul(100.0).alias("pos_pct"),
-                pl.col("move_pct").mean().alias("avg_move"),
-                pl.col("move_pct").median().alias("median_move"),
-                pl.col("move_pct").filter(pl.col("move_pct") > 0).mean().alias("avg_up_move"),
-                pl.col("move_pct").filter(pl.col("move_pct") < 0).mean().alias("avg_down_move"),
-                pl.col("move_pct").max().alias("max_gain"),
-                pl.col("move_pct").min().alias("max_drop")
-            ]).to_pandas()
+                sec_overall = sec_yearly.group_by("industry").agg([
+                    pl.len().alias("total_months"),
+                    (pl.col("sec_m_move") > 0).sum().alias("pos_months_cnt"),
+                    (pl.col("sec_m_move") <= 0).sum().alias("neg_months_cnt"),
+                    ((pl.col("sec_m_move") > 0).mean() * 100.0).alias("overall_pos_pct")
+                ]).to_pandas()
 
-            # Find top performing stock in each sector for this month
-            stock_m_agg = stocks_m.group_by(["industry", "symbol"]).agg([
-                pl.col("move_pct").mean().alias("stock_avg_move")
-            ]).to_pandas()
+                sec_pos = sec_m_stats.pivot(index="industry", columns="month", values="m_pos").fillna(0)
+                sec_neg = sec_m_stats.pivot(index="industry", columns="month", values="m_neg").fillna(0)
+                sec_tot = sec_m_stats.pivot(index="industry", columns="month", values="m_tot").fillna(0)
+                sec_pct = sec_m_stats.pivot(index="industry", columns="month", values="m_pos_pct").fillna(0)
 
-            top_stocks_per_sec = {}
-            for ind, group in stock_m_agg.groupby("industry"):
-                best_s = group.loc[group['stock_avg_move'].idxmax()]
-                top_stocks_per_sec[ind] = f"{best_s['symbol']} ({best_s['stock_avg_move']:+.1f}%)"
+                sec_matrix = sec_overall.set_index("industry")
+                sec_matrix["Sector"] = sec_matrix.index
+                for m_idx in range(1, 13):
+                    m_name = MONTH_NAMES[m_idx - 1]
+                    sec_matrix[f"{m_name}_pos"] = sec_pos[m_idx].astype(int) if m_idx in sec_pos.columns else 0
+                    sec_matrix[f"{m_name}_neg"] = sec_neg[m_idx].astype(int) if m_idx in sec_neg.columns else 0
+                    sec_matrix[f"{m_name}_tot"] = sec_tot[m_idx].astype(int) if m_idx in sec_tot.columns else 0
+                    sec_matrix[f"{m_name}_pos_pct"] = sec_pct[m_idx] if m_idx in sec_pct.columns else 0.0
 
-            sec_stats['Top Performer Stock'] = sec_stats['industry'].map(top_stocks_per_sec)
+                sec_merged = sec_matrix.reset_index(drop=True)
 
-            # Sort
-            sort_key = "avg_move" if "Average" in sort_sec_by else ("pos_pct" if "% Positive" in sort_sec_by else "median_move")
-            sec_stats = sec_stats.sort_values(sort_key, ascending=False).reset_index(drop=True)
+                # Controls above sector table
+                c_s1, c_s2, c_s3, c_s4 = st.columns([1.5, 1.4, 1.8, 1.8])
+                with c_s1:
+                    sort_sec_col = st.selectbox(
+                        "Sort Sectors By:",
+                        ["Overall Positive %", "Total Months"] + MONTH_NAMES,
+                        index=0,
+                        key="sec2_sort_col"
+                    )
+                with c_s2:
+                    sort_sec_dir = st.radio("Sort Order:", ["Highest to Lowest", "Lowest to Highest"], horizontal=True, key="sec2_sort_dir")
+                with c_s3:
+                    sec_fmt_choice = st.selectbox(
+                        "Month Cell Format:",
+                        [
+                            "total (+ve, -ve)  [e.g. 25 (16 +ve, 9 -ve)]",
+                            "total (+ve🟢, -ve🔴)  [e.g. 25 (16🟢 +ve, 9🔴 -ve)]"
+                        ],
+                        index=0,
+                        key="sec2_fmt_choice"
+                    )
+                with c_s4:
+                    search_sec_q = st.text_input("🔍 Search Sector:", "", key="sec2_search_q")
 
-            # Leaderboard Display
-            st.markdown(f"#### 🏆 Sector Performance Leaderboard in {chosen_sec_month_name}")
-            show_sec_df = pd.DataFrame({
-                "Sector / Industry": sec_stats['industry'],
-                "Stocks": sec_stats['stocks_in_sector'],
-                "Positive Months (%)": sec_stats['pos_pct'].apply(lambda x: f"{x:.1f}%"),
-                "Positive vs Negative": sec_stats.apply(lambda r: f"{r['pos_candles']}🟢 / {r['neg_candles']}🔴", axis=1),
-                "Avg Move (%)": sec_stats['avg_move'].apply(lambda x: f"{x:+.2f}%"),
-                "Median Move (%)": sec_stats['median_move'].apply(lambda x: f"{x:+.2f}%"),
-                "Avg Up Move (%)": sec_stats['avg_up_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
-                "Avg Down Move (%)": sec_stats['avg_down_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
-                "Best Historical Gain": sec_stats['max_gain'].apply(lambda x: f"{x:+.1f}%"),
-                "Max Drawdown": sec_stats['max_drop'].apply(lambda x: f"{x:+.1f}%"),
-                "Top Performer Stock (Avg)": sec_stats['Top Performer Stock']
-            })
-            st.dataframe(show_sec_df, width="stretch", hide_index=True)
+                if search_sec_q:
+                    q_lower = search_sec_q.strip().lower()
+                    sec_merged = sec_merged[sec_merged['Sector'].str.lower().str.contains(q_lower)]
 
-            # Full 20 Sectors x 12 Months Seasonality Table
-            st.markdown("---")
-            st.markdown(f"#### 📅 20 Sectors Month-by-Month Seasonality Table ({filter_min_yr} – {filter_max_yr})")
-            st.caption("Shows monthly breakdown for each sector: exact positive vs. negative counts out of total evaluated months.")
+                asc_sec = (sort_sec_dir == "Lowest to Highest")
+                if not sec_merged.empty:
+                    if sort_sec_col == "Overall Positive %":
+                        sec_merged = sec_merged.sort_values("overall_pos_pct", ascending=asc_sec)
+                    elif sort_sec_col == "Total Months":
+                        sec_merged = sec_merged.sort_values("total_months", ascending=asc_sec)
+                    elif sort_sec_col in MONTH_NAMES:
+                        sec_merged = sec_merged.sort_values(f"{sort_sec_col}_pos_pct", ascending=asc_sec)
 
-            sec_yearly = stocks_pl.group_by(["industry", "year", "month"]).agg(pl.col("move_pct").mean().alias("sec_m_move"))
-            sec_m_stats = sec_yearly.group_by(["industry", "month"]).agg([
-                pl.len().alias("m_tot"),
-                (pl.col("sec_m_move") > 0).sum().alias("m_pos"),
-                (pl.col("sec_m_move") <= 0).sum().alias("m_neg"),
-                pl.col("sec_m_move").mean().alias("m_avg"),
-                ((pl.col("sec_m_move") > 0).mean() * 100.0).alias("m_pos_pct")
-            ]).to_pandas()
+                # Format sector table
+                display_sec_table = pd.DataFrame()
+                if not sec_merged.empty:
+                    display_sec_table["Sector"] = sec_merged["Sector"]
+                    for m_idx in range(1, 13):
+                        m_name = MONTH_NAMES[m_idx - 1]
+                        p_s = sec_merged[f"{m_name}_pos"]
+                        n_s = sec_merged[f"{m_name}_neg"]
+                        t_s = sec_merged[f"{m_name}_tot"]
+                        if "(+ve🟢, -ve🔴)" in sec_fmt_choice:
+                            display_sec_table[m_name] = [
+                                f"{t} ({p}🟢 +ve, {n}🔴 -ve)" if t > 0 else "-"
+                                for p, n, t in zip(p_s, n_s, t_s)
+                            ]
+                        else:
+                            display_sec_table[m_name] = [
+                                f"{t} ({p} +ve, {n} -ve)" if t > 0 else "-"
+                                for p, n, t in zip(p_s, n_s, t_s)
+                            ]
+                    display_sec_table["Total Months"] = sec_merged["total_months"]
+                    display_sec_table["Positive Months"] = sec_merged.apply(lambda r: f"{r['pos_months_cnt']} ({r['overall_pos_pct']:.1f}%)", axis=1)
+                    display_sec_table["Negative Months"] = sec_merged.apply(lambda r: f"{r['neg_months_cnt']} ({100.0 - r['overall_pos_pct']:.1f}%)", axis=1)
 
-            sec_overall = sec_yearly.group_by("industry").agg([
-                pl.len().alias("total_months"),
-                (pl.col("sec_m_move") > 0).sum().alias("pos_months_cnt"),
-                (pl.col("sec_m_move") <= 0).sum().alias("neg_months_cnt"),
-                ((pl.col("sec_m_move") > 0).mean() * 100.0).alias("overall_pos_pct"),
-                pl.col("sec_m_move").mean().alias("overall_avg_move")
-            ]).to_pandas()
+                st.dataframe(display_sec_table, width="stretch", hide_index=True)
 
-            sec_pos = sec_m_stats.pivot(index="industry", columns="month", values="m_pos").fillna(0)
-            sec_neg = sec_m_stats.pivot(index="industry", columns="month", values="m_neg").fillna(0)
-            sec_tot = sec_m_stats.pivot(index="industry", columns="month", values="m_tot").fillna(0)
+                # 2. Sector Deep-Dive: Constituent Stocks Month-by-Month Matrix
+                st.markdown("---")
+                st.markdown("#### 🔍 Sector Deep-Dive: Constituent Stocks Month-by-Month Matrix")
+                all_inds = sorted(stocks_pl['industry'].unique().to_list())
+                chosen_drill_sec = st.selectbox("🏢 Select Sector to Inspect Stocks:", all_inds, index=0, key="sec2_drill_sec")
 
-            sec_table = pd.DataFrame()
-            sec_table["Sector"] = sec_overall["industry"]
-            for m_idx in range(1, 13):
-                m_name = MONTH_NAMES[m_idx - 1]
-                pos_col = sec_pos.reindex(sec_table["Sector"])[m_idx].fillna(0).astype(int) if m_idx in sec_pos.columns else 0
-                neg_col = sec_neg.reindex(sec_table["Sector"])[m_idx].fillna(0).astype(int) if m_idx in sec_neg.columns else 0
-                tot_col = sec_tot.reindex(sec_table["Sector"])[m_idx].fillna(0).astype(int) if m_idx in sec_tot.columns else 0
-                sec_table[m_name] = [
-                    f"{t} ({p} +ve, {n} -ve)" if t > 0 else "-"
-                    for p, n, t in zip(pos_col, neg_col, tot_col)
-                ]
-            sec_table["Total Months"] = sec_overall["total_months"]
-            sec_table["Positive Months"] = sec_overall.apply(lambda r: f"{r['pos_months_cnt']} ({r['overall_pos_pct']:.1f}%)", axis=1)
-            sec_table["Negative Months"] = sec_overall.apply(lambda r: f"{r['neg_months_cnt']} ({100.0 - r['overall_pos_pct']:.1f}%)", axis=1)
-            sec_table["Overall Avg Move"] = sec_overall["overall_avg_move"].apply(lambda x: f"{x:+.2f}%")
+                # Filter stocks for chosen sector
+                stk_sec_pl = stocks_pl.filter(pl.col("industry") == chosen_drill_sec)
 
-            st.dataframe(sec_table, width="stretch", hide_index=True)
+                stk_sec_overall = stk_sec_pl.group_by(["symbol", "company_name"]).agg([
+                    pl.len().alias("total_months"),
+                    (pl.col("move_pct") > 0).sum().alias("pos_months_cnt"),
+                    (pl.col("move_pct") <= 0).sum().alias("neg_months_cnt"),
+                    ((pl.col("move_pct") > 0).mean() * 100.0).alias("overall_pos_pct")
+                ]).to_pandas()
 
-            # Sector Drill-down
-            st.markdown("---")
-            st.markdown("#### 🔍 Sector Deep-Dive (Inspect Constituent Stocks)")
-            all_inds = sorted(sec_stats['industry'].unique().tolist())
-            chosen_ind_drill = st.selectbox("Select Sector to Drill Down:", all_inds, key="sec_drill_pick")
+                stk_sec_m = stk_sec_pl.group_by(["symbol", "month"]).agg([
+                    pl.len().alias("m_tot"),
+                    (pl.col("move_pct") > 0).sum().alias("m_pos"),
+                    (pl.col("move_pct") <= 0).sum().alias("m_neg"),
+                    ((pl.col("move_pct") > 0).mean() * 100.0).alias("m_pos_pct")
+                ]).to_pandas()
 
-            sec_stocks_pl = stocks_pl.filter(pl.col("industry") == chosen_ind_drill)
-            sec_stocks_m = sec_stocks_pl.filter(pl.col("month") == chosen_sec_month)
-            drill_stock_stats = sec_stocks_m.group_by(["symbol", "company_name"]).agg([
-                pl.len().alias("years"),
-                (pl.col("move_pct") > 0).sum().alias("pos_count"),
-                (pl.col("move_pct") <= 0).sum().alias("neg_count"),
-                pl.col("is_positive").mean().mul(100.0).alias("pos_pct"),
-                pl.col("move_pct").mean().alias("avg_move"),
-                pl.col("move_pct").median().alias("median_move"),
-                pl.col("move_pct").filter(pl.col("move_pct") > 0).mean().alias("avg_up_move"),
-                pl.col("move_pct").filter(pl.col("move_pct") < 0).mean().alias("avg_down_move"),
-                pl.col("move_pct").max().alias("max_gain"),
-                pl.col("move_pct").min().alias("max_drop")
-            ]).sort("avg_move", descending=True).to_pandas()
+                stk_pos = stk_sec_m.pivot(index="symbol", columns="month", values="m_pos").fillna(0)
+                stk_neg = stk_sec_m.pivot(index="symbol", columns="month", values="m_neg").fillna(0)
+                stk_tot = stk_sec_m.pivot(index="symbol", columns="month", values="m_tot").fillna(0)
+                stk_pct = stk_sec_m.pivot(index="symbol", columns="month", values="m_pos_pct").fillna(0)
 
-            show_drill = pd.DataFrame({
-                "Symbol": drill_stock_stats['symbol'],
-                "Company Name": drill_stock_stats['company_name'],
-                "Total Years": drill_stock_stats['years'].apply(lambda x: f"{x} Yrs"),
-                "Positive Months": drill_stock_stats.apply(lambda r: f"{r['pos_count']}🟢 ({r['pos_pct']:.1f}%)", axis=1),
-                "Negative Months": drill_stock_stats.apply(lambda r: f"{r['neg_count']}🔴 ({100.0 - r['pos_pct']:.1f}%)", axis=1),
-                "Avg Move (%)": drill_stock_stats['avg_move'].apply(lambda x: f"{x:+.2f}%"),
-                "Median Move (%)": drill_stock_stats['median_move'].apply(lambda x: f"{x:+.2f}%"),
-                "Avg Up Move (%)": drill_stock_stats['avg_up_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
-                "Avg Down Move (%)": drill_stock_stats['avg_down_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
-                "Best Gain": drill_stock_stats['max_gain'].apply(lambda x: f"{x:+.1f}%"),
-                "Max Drop": drill_stock_stats['max_drop'].apply(lambda x: f"{x:+.1f}%")
-            })
-            st.markdown(f"**Constituent Stocks of `{chosen_ind_drill}` in {chosen_sec_month_name} ({len(show_drill)} Stocks):**")
-            st.dataframe(show_drill, width="stretch", hide_index=True)
+                stk_sec_matrix = stk_sec_overall.set_index("symbol")
+                stk_sec_matrix["Stock"] = stk_sec_matrix.index
+                for m_idx in range(1, 13):
+                    m_name = MONTH_NAMES[m_idx - 1]
+                    stk_sec_matrix[f"{m_name}_pos"] = stk_pos[m_idx].astype(int) if m_idx in stk_pos.columns else 0
+                    stk_sec_matrix[f"{m_name}_neg"] = stk_neg[m_idx].astype(int) if m_idx in stk_neg.columns else 0
+                    stk_sec_matrix[f"{m_name}_tot"] = stk_tot[m_idx].astype(int) if m_idx in stk_tot.columns else 0
+                    stk_sec_matrix[f"{m_name}_pos_pct"] = stk_pct[m_idx] if m_idx in stk_pct.columns else 0.0
+
+                stk_sec_merged = stk_sec_matrix.reset_index(drop=True)
+
+                # Controls above drill-down table
+                cd_s1, cd_s2, cd_s3 = st.columns([1.8, 1.8, 2.4])
+                with cd_s1:
+                    sort_stk_col = st.selectbox(
+                        "Sort Stocks By:",
+                        ["Overall Positive %", "Total Months"] + MONTH_NAMES,
+                        index=0,
+                        key="sec2_stk_sort_col"
+                    )
+                with cd_s2:
+                    sort_stk_dir = st.radio("Sort Order:", ["Highest to Lowest", "Lowest to Highest"], horizontal=True, key="sec2_stk_sort_dir")
+                with cd_s3:
+                    search_stk_q = st.text_input("🔍 Search Stock in Sector:", "", key="sec2_stk_search_q")
+
+                if search_stk_q and not stk_sec_merged.empty:
+                    q_lower = search_stk_q.strip().lower()
+                    stk_sec_merged = stk_sec_merged[
+                        stk_sec_merged['Stock'].str.lower().str.contains(q_lower) |
+                        stk_sec_merged['company_name'].str.lower().str.contains(q_lower)
+                    ]
+
+                asc_stk = (sort_stk_dir == "Lowest to Highest")
+                if not stk_sec_merged.empty:
+                    if sort_stk_col == "Overall Positive %":
+                        stk_sec_merged = stk_sec_merged.sort_values("overall_pos_pct", ascending=asc_stk)
+                    elif sort_stk_col == "Total Months":
+                        stk_sec_merged = stk_sec_merged.sort_values("total_months", ascending=asc_stk)
+                    elif sort_stk_col in MONTH_NAMES:
+                        stk_sec_merged = stk_sec_merged.sort_values(f"{sort_stk_col}_pos_pct", ascending=asc_stk)
+
+                display_stk_table = pd.DataFrame()
+                if not stk_sec_merged.empty:
+                    display_stk_table["Stock"] = stk_sec_merged["Stock"]
+                    display_stk_table["Company Name"] = stk_sec_merged["company_name"]
+                    for m_idx in range(1, 13):
+                        m_name = MONTH_NAMES[m_idx - 1]
+                        p_s = stk_sec_merged[f"{m_name}_pos"]
+                        n_s = stk_sec_merged[f"{m_name}_neg"]
+                        t_s = stk_sec_merged[f"{m_name}_tot"]
+                        if "(+ve🟢, -ve🔴)" in sec_fmt_choice:
+                            display_stk_table[m_name] = [
+                                f"{t} ({p}🟢 +ve, {n}🔴 -ve)" if t > 0 else "-"
+                                for p, n, t in zip(p_s, n_s, t_s)
+                            ]
+                        else:
+                            display_stk_table[m_name] = [
+                                f"{t} ({p} +ve, {n} -ve)" if t > 0 else "-"
+                                for p, n, t in zip(p_s, n_s, t_s)
+                            ]
+                    display_stk_table["Total Months"] = stk_sec_merged["total_months"]
+                    display_stk_table["Positive Months"] = stk_sec_merged.apply(lambda r: f"{r['pos_months_cnt']} ({r['overall_pos_pct']:.1f}%)", axis=1)
+                    display_stk_table["Negative Months"] = stk_sec_merged.apply(lambda r: f"{r['neg_months_cnt']} ({100.0 - r['overall_pos_pct']:.1f}%)", axis=1)
+
+                st.markdown(f"**Constituent Stocks of `{chosen_drill_sec}` ({len(display_stk_table)} Stocks):**")
+                st.dataframe(display_stk_table, width="stretch", hide_index=True)
+
+            # =========================================================
+            # VIEW 2: SINGLE MONTH SECTOR DETAIL
+            # =========================================================
+            else:
+                sec_c1, sec_c2 = st.columns([2.0, 4.0])
+                with sec_c1:
+                    cur_month_idx = pd.Timestamp.now().month
+                    chosen_sec_month_name = st.selectbox(
+                        "📅 Select Calendar Month:",
+                        MONTH_FULL_NAMES,
+                        index=cur_month_idx - 1,
+                        key="sec_chosen_single_month"
+                    )
+                    chosen_sec_month = MONTH_FULL_NAMES.index(chosen_sec_month_name) + 1
+                with sec_c2:
+                    st.markdown(f"""
+                    <div style="font-size:12px; color:#94a3b8; margin-top:28px;">
+                        Evaluating performance of <strong>500 stocks</strong> across <strong>{span_years} years</strong> for <strong>{chosen_sec_month_name}</strong>.
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # Compute Sector stats for chosen month
+                stocks_m = stocks_pl.filter(pl.col("month") == chosen_sec_month)
+                sec_stats = stocks_m.group_by("industry").agg([
+                    pl.len().alias("sample_candles"),
+                    pl.col("symbol").n_unique().alias("stocks_in_sector"),
+                    (pl.col("move_pct") > 0).sum().alias("pos_candles"),
+                    (pl.col("move_pct") <= 0).sum().alias("neg_candles"),
+                    pl.col("is_positive").mean().mul(100.0).alias("pos_pct")
+                ]).sort("pos_pct", descending=True).to_pandas()
+
+                st.markdown(f"#### 🏆 Sector Performance in {chosen_sec_month_name}")
+                show_sec_single_df = pd.DataFrame({
+                    "Sector / Industry": sec_stats['industry'],
+                    "Stocks in Sector": sec_stats['stocks_in_sector'],
+                    "Total Evaluated Months": sec_stats['sample_candles'],
+                    "Positive Months": sec_stats.apply(lambda r: f"{r['pos_candles']} ({r['pos_pct']:.1f}%)", axis=1),
+                    "Negative Months": sec_stats.apply(lambda r: f"{r['neg_candles']} ({100.0 - r['pos_pct']:.1f}%)", axis=1)
+                })
+                st.dataframe(show_sec_single_df, width="stretch", hide_index=True)
+
+                # Sector Drill-down in Single Month
+                st.markdown("---")
+                all_inds = sorted(sec_stats['industry'].unique().tolist())
+                chosen_ind_drill = st.selectbox("Select Sector to Drill Down:", all_inds, key="sec_single_drill_pick")
+
+                sec_stocks_pl = stocks_pl.filter(pl.col("industry") == chosen_ind_drill)
+                sec_stocks_m = sec_stocks_pl.filter(pl.col("month") == chosen_sec_month)
+                drill_stock_stats = sec_stocks_m.group_by(["symbol", "company_name"]).agg([
+                    pl.len().alias("years"),
+                    (pl.col("move_pct") > 0).sum().alias("pos_count"),
+                    (pl.col("move_pct") <= 0).sum().alias("neg_count"),
+                    pl.col("is_positive").mean().mul(100.0).alias("pos_pct")
+                ]).sort("pos_pct", descending=True).to_pandas()
+
+                show_drill = pd.DataFrame({
+                    "Symbol": drill_stock_stats['symbol'],
+                    "Company Name": drill_stock_stats['company_name'],
+                    "Total Years": drill_stock_stats['years'].apply(lambda x: f"{x} Yrs"),
+                    "Positive Months": drill_stock_stats.apply(lambda r: f"{r['pos_count']} ({r['pos_pct']:.1f}%)", axis=1),
+                    "Negative Months": drill_stock_stats.apply(lambda r: f"{r['neg_count']} ({100.0 - r['pos_pct']:.1f}%)", axis=1)
+                })
+                st.markdown(f"**Constituent Stocks of `{chosen_ind_drill}` in {chosen_sec_month_name} ({len(show_drill)} Stocks):**")
+                st.dataframe(show_drill, width="stretch", hide_index=True)
 
     # =============================================================
     # TAB 3: STOCK SEASONALITY PERFORMANCE (NIFTY 50, SECTORAL & ALL STOCKS)
