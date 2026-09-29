@@ -134,7 +134,8 @@ def load_nifty_monthly_seasonality_df():
 def compute_monthly_summary(df, date_col='date', move_col='move_pct'):
     """
     Computes month-wise stats across Jan to Dec for a single asset (Nifty or individual stock).
-    Returns a DataFrame with 12 rows (Jan..Dec) containing Win Rate, Avg, Median, Best, Worst.
+    Returns a DataFrame with 12 rows (Jan..Dec) containing positive frequency, avg/median move,
+    avg up move, avg down move, best, worst.
     """
     stats = []
     for m in range(1, 13):
@@ -146,11 +147,15 @@ def compute_monthly_summary(df, date_col='date', move_col='move_pct'):
                 'Month': MONTH_NAMES[m - 1],
                 'Month_Full': MONTH_FULL_NAMES[m - 1],
                 'Total_Years': 0,
-                'Win_Rate': 0.0,
+                'Pos_Pct': 0.0,
+                'Neg_Pct': 0.0,
+                'Win_Rate': 0.0,  # alias for backward safety
                 'Avg_Move': 0.0,
                 'Median_Move': 0.0,
                 'Pos_Count': 0,
                 'Neg_Count': 0,
+                'Avg_Up_Move': 0.0,
+                'Avg_Down_Move': 0.0,
                 'Best_Year': '-',
                 'Best_Move': 0.0,
                 'Worst_Year': '-',
@@ -163,9 +168,15 @@ def compute_monthly_summary(df, date_col='date', move_col='move_pct'):
         pos_mask = m_sub[move_col] > 0
         pos_cnt = int(pos_mask.sum())
         neg_cnt = tot - pos_cnt
-        win_rate = (pos_cnt / tot) * 100.0
+        pos_pct = (pos_cnt / tot) * 100.0
+        neg_pct = (neg_cnt / tot) * 100.0
         avg_move = float(m_sub[move_col].mean())
         med_move = float(m_sub[move_col].median())
+
+        up_moves = m_sub.loc[pos_mask, move_col]
+        dn_moves = m_sub.loc[~pos_mask, move_col]
+        avg_up = float(up_moves.mean()) if len(up_moves) > 0 else 0.0
+        avg_dn = float(dn_moves.mean()) if len(dn_moves) > 0 else 0.0
 
         best_idx = m_sub[move_col].idxmax()
         worst_idx = m_sub[move_col].idxmin()
@@ -180,11 +191,15 @@ def compute_monthly_summary(df, date_col='date', move_col='move_pct'):
             'Month': MONTH_NAMES[m - 1],
             'Month_Full': MONTH_FULL_NAMES[m - 1],
             'Total_Years': tot,
-            'Win_Rate': win_rate,
+            'Pos_Pct': pos_pct,
+            'Neg_Pct': neg_pct,
+            'Win_Rate': pos_pct,  # backward compatibility
             'Avg_Move': avg_move,
             'Median_Move': med_move,
             'Pos_Count': pos_cnt,
             'Neg_Count': neg_cnt,
+            'Avg_Up_Move': avg_up,
+            'Avg_Down_Move': avg_dn,
             'Best_Year': str(int(best_row['year'])),
             'Best_Move': float(best_row[move_col]),
             'Worst_Year': str(int(worst_row['year'])),
@@ -232,22 +247,22 @@ def build_year_matrix(df, move_col='move_pct'):
 # =============================================================
 def plot_seasonality_profile_chart(stats_df, title="Monthly Seasonality Profile"):
     """
-    Creates a dual-metric chart showing Positive Win Rate (%) bars and Average Move (%) overlay.
+    Creates a dual-metric chart showing % Positive Months bars and Average Move (%) overlay.
     """
     fig = go.Figure()
 
-    # Win Rate Bars
+    col_to_use = 'Pos_Pct' if 'Pos_Pct' in stats_df.columns else 'Win_Rate'
     colors = [
-        '#00d26a' if wr >= 60.0 else ('#38bdf8' if wr >= 50.0 else ('#fbbf24' if wr >= 40.0 else '#f43f5e'))
-        for wr in stats_df['Win_Rate']
+        '#00d26a' if p >= 60.0 else ('#38bdf8' if p >= 50.0 else ('#fbbf24' if p >= 40.0 else '#f43f5e'))
+        for p in stats_df[col_to_use]
     ]
 
     fig.add_trace(go.Bar(
         x=stats_df['Month'],
-        y=stats_df['Win_Rate'],
-        name='Positive Win Rate (%)',
+        y=stats_df[col_to_use],
+        name='% Positive Months (Green)',
         marker_color=colors,
-        text=stats_df['Win_Rate'].apply(lambda x: f"{x:.1f}%"),
+        text=stats_df[col_to_use].apply(lambda x: f"{x:.1f}%"),
         textposition='outside',
         yaxis='y'
     ))
@@ -267,13 +282,13 @@ def plot_seasonality_profile_chart(stats_df, title="Monthly Seasonality Profile"
 
     # 50% Baseline reference
     fig.add_hline(y=50.0, line_dash="dash", line_color="#94a3b8", line_width=1.5,
-                  annotation_text="50% Coin Toss Baseline", annotation_position="top left")
+                  annotation_text="50% Even Split Baseline", annotation_position="top left")
 
     fig.update_layout(
         title=f"<b>{title}</b>",
         xaxis=dict(title="Calendar Month"),
         yaxis=dict(
-            title="Positive Win Rate (%)",
+            title="% Positive Months (Green)",
             range=[0, 100],
             gridcolor="#232f48"
         ),
@@ -475,7 +490,7 @@ def render_seasonality_section():
         <div style="background: rgba(56, 189, 248, 0.08); border-left: 3px solid #38bdf8; padding: 10px 14px; border-radius: 6px; font-size: 13px; color: #cbd5e1; margin-top: 4px;">
             <strong>🎯 Active Analysis Horizon:</strong> <span style="color:#38bdf8; font-weight:700;">{filter_min_yr} – {filter_max_yr}</span> ({span_years} Calendar Years)<br>
             • <strong>Move Formula:</strong> <code>(Month Close - Month Open) / Month Open &times; 100</code><br>
-            • <strong>Win Rate (%):</strong> Percentage of historical years where the candle closed GREEN (> 0.0%).
+            • <strong>Directional Probability:</strong> Historical frequency of positive green months vs. negative red months and their respective average move magnitudes.
         </div>
         """, unsafe_allow_html=True)
 
@@ -491,8 +506,8 @@ def render_seasonality_section():
     # 4 Main Feature Tabs
     s_tab1, s_tab2, s_tab3, s_tab4 = st.tabs([
         "📈 1. NIFTY 50 Index Seasonality",
-        "🏢 2. Sectoral Seasonality (20 Sectors)",
-        "🎯 3. Nifty 50 Stocks Seasonality",
+        "🏢 2. Sector Macro Overview (20 Sectors)",
+        "🎯 3. Stock Seasonality (Nifty 50, Sectoral & All Stocks)",
         "🔍 4. Individual Stock Deep-Dive (500 Stocks)"
     ])
 
@@ -513,7 +528,7 @@ def render_seasonality_section():
                 m_num = row_idx * 4 + col_idx  # 0..11
                 m_row = nifty_stats.iloc[m_num]
                 m_name = m_row['Month']
-                wr = m_row['Win_Rate']
+                wr = m_row['Pos_Pct']
                 avg_m = m_row['Avg_Move']
                 med_m = m_row['Median_Move']
                 pos_c = m_row['Pos_Count']
@@ -523,6 +538,8 @@ def render_seasonality_section():
                 best_v = m_row['Best_Move']
                 worst_yr = m_row['Worst_Year']
                 worst_v = m_row['Worst_Move']
+                avg_up = m_row['Avg_Up_Move']
+                avg_dn = m_row['Avg_Down_Move']
 
                 # Badge colors
                 wr_color = "#00d26a" if wr >= 60.0 else ("#38bdf8" if wr >= 50.0 else ("#fbbf24" if wr >= 40.0 else "#f43f5e"))
@@ -536,8 +553,8 @@ def render_seasonality_section():
 </div>
 <hr style="margin: 6px 0; border-color: #232f48;">
 <div style="display:flex; justify-content:space-between; margin-bottom: 3px;">
-    <span style="font-size:12px; color:#94a3b8;">Win Rate:</span>
-    <strong style="color: {wr_color}; font-size:13px;">{wr:.1f}% ({pos_c}🟢 / {neg_c}🔴)</strong>
+    <span style="font-size:12px; color:#94a3b8;">Positive Years:</span>
+    <strong style="color: {wr_color}; font-size:13px;">{pos_c}🟢 / {tot_y} Yrs ({wr:.1f}%)</strong>
 </div>
 <div style="display:flex; justify-content:space-between; margin-bottom: 3px;">
     <span style="font-size:12px; color:#94a3b8;">Average Move:</span>
@@ -546,6 +563,10 @@ def render_seasonality_section():
 <div style="display:flex; justify-content:space-between; margin-bottom: 3px;">
     <span style="font-size:12px; color:#94a3b8;">Median Move:</span>
     <span style="color: #cbd5e1; font-size:12px;">{med_m:+.2f}%</span>
+</div>
+<div style="display:flex; justify-content:space-between; margin-bottom: 3px;">
+    <span style="font-size:12px; color:#94a3b8;">Avg Up / Down:</span>
+    <span style="font-size:11.5px;"><strong style="color:#00d26a;">{avg_up:+.2f}%</strong> / <strong style="color:#f43f5e;">{avg_dn:+.2f}%</strong></span>
 </div>
 <div style="display:flex; justify-content:space-between; font-size:11px; color:#94a3b8; margin-top: 4px; padding-top: 4px; border-top: 1px dashed #1e293b;">
     <span>Best: <strong style="color:#00d26a;">{best_v:+.1f}%</strong> ({best_yr})</span>
@@ -556,7 +577,7 @@ def render_seasonality_section():
 
         # Plotly Bar Chart
         st.markdown("---")
-        st.markdown("#### 📊 Visual Seasonality Distribution (Win Rate % & Average Return %)")
+        st.markdown("#### 📊 Visual Seasonality Distribution (% Positive Months & Average Return %)")
         fig_nifty_bars = plot_seasonality_profile_chart(
             nifty_stats,
             title=f"NIFTY 50 Monthly Seasonality ({filter_min_yr} – {filter_max_yr})"
@@ -564,7 +585,7 @@ def render_seasonality_section():
         st.plotly_chart(fig_nifty_bars, width="stretch")
 
         # Key Observations
-        sorted_by_wr = nifty_stats.sort_values('Win_Rate', ascending=False)
+        sorted_by_wr = nifty_stats.sort_values('Pos_Pct', ascending=False)
         top3_months = sorted_by_wr.head(3)
         bot3_months = sorted_by_wr.tail(3)
 
@@ -572,22 +593,22 @@ def render_seasonality_section():
         with o_col1:
             st.markdown(f"""
             <div style="background: rgba(0, 210, 106, 0.08); border: 1px solid rgba(0, 210, 106, 0.3); border-radius: 8px; padding: 12px 16px;">
-                <strong style="color: #00d26a; font-size: 14px;">🟢 Historically Strongest Months:</strong>
+                <strong style="color: #00d26a; font-size: 14px;">🟢 Historically Positive Tendency Months:</strong>
                 <ul style="font-size: 13px; color: #cbd5e1; margin-top: 6px; margin-bottom: 0;">
-                    <li><strong>{top3_months.iloc[0]['Month_Full']}:</strong> {top3_months.iloc[0]['Win_Rate']:.1f}% Win Rate | Avg Move: <strong style="color:#00d26a;">{top3_months.iloc[0]['Avg_Move']:+.2f}%</strong></li>
-                    <li><strong>{top3_months.iloc[1]['Month_Full']}:</strong> {top3_months.iloc[1]['Win_Rate']:.1f}% Win Rate | Avg Move: <strong style="color:#00d26a;">{top3_months.iloc[1]['Avg_Move']:+.2f}%</strong></li>
-                    <li><strong>{top3_months.iloc[2]['Month_Full']}:</strong> {top3_months.iloc[2]['Win_Rate']:.1f}% Win Rate | Avg Move: <strong style="color:#00d26a;">{top3_months.iloc[2]['Avg_Move']:+.2f}%</strong></li>
+                    <li><strong>{top3_months.iloc[0]['Month_Full']}:</strong> {top3_months.iloc[0]['Pos_Pct']:.1f}% Positive Months | Avg Move: <strong style="color:#00d26a;">{top3_months.iloc[0]['Avg_Move']:+.2f}%</strong> (Up Avg: {top3_months.iloc[0]['Avg_Up_Move']:+.2f}%)</li>
+                    <li><strong>{top3_months.iloc[1]['Month_Full']}:</strong> {top3_months.iloc[1]['Pos_Pct']:.1f}% Positive Months | Avg Move: <strong style="color:#00d26a;">{top3_months.iloc[1]['Avg_Move']:+.2f}%</strong> (Up Avg: {top3_months.iloc[1]['Avg_Up_Move']:+.2f}%)</li>
+                    <li><strong>{top3_months.iloc[2]['Month_Full']}:</strong> {top3_months.iloc[2]['Pos_Pct']:.1f}% Positive Months | Avg Move: <strong style="color:#00d26a;">{top3_months.iloc[2]['Avg_Move']:+.2f}%</strong> (Up Avg: {top3_months.iloc[2]['Avg_Up_Move']:+.2f}%)</li>
                 </ul>
             </div>
             """, unsafe_allow_html=True)
         with o_col2:
             st.markdown(f"""
             <div style="background: rgba(244, 63, 94, 0.08); border: 1px solid rgba(244, 63, 94, 0.3); border-radius: 8px; padding: 12px 16px;">
-                <strong style="color: #f43f5e; font-size: 14px;">🔴 Historically Challenging Months:</strong>
+                <strong style="color: #f43f5e; font-size: 14px;">🔴 Historically Vulnerable Months:</strong>
                 <ul style="font-size: 13px; color: #cbd5e1; margin-top: 6px; margin-bottom: 0;">
-                    <li><strong>{bot3_months.iloc[0]['Month_Full']}:</strong> {bot3_months.iloc[0]['Win_Rate']:.1f}% Win Rate | Avg Move: <strong style="color:#f43f5e;">{bot3_months.iloc[0]['Avg_Move']:+.2f}%</strong></li>
-                    <li><strong>{bot3_months.iloc[1]['Month_Full']}:</strong> {bot3_months.iloc[1]['Win_Rate']:.1f}% Win Rate | Avg Move: <strong style="color:#f43f5e;">{bot3_months.iloc[1]['Avg_Move']:+.2f}%</strong></li>
-                    <li><strong>{bot3_months.iloc[2]['Month_Full']}:</strong> {bot3_months.iloc[2]['Win_Rate']:.1f}% Win Rate | Avg Move: <strong style="color:#f43f5e;">{bot3_months.iloc[2]['Avg_Move']:+.2f}%</strong></li>
+                    <li><strong>{bot3_months.iloc[0]['Month_Full']}:</strong> {bot3_months.iloc[0]['Pos_Pct']:.1f}% Positive Months | Avg Move: <strong style="color:#f43f5e;">{bot3_months.iloc[0]['Avg_Move']:+.2f}%</strong> (Down Avg: {bot3_months.iloc[0]['Avg_Down_Move']:+.2f}%)</li>
+                    <li><strong>{bot3_months.iloc[1]['Month_Full']}:</strong> {bot3_months.iloc[1]['Pos_Pct']:.1f}% Positive Months | Avg Move: <strong style="color:#f43f5e;">{bot3_months.iloc[1]['Avg_Move']:+.2f}%</strong> (Down Avg: {bot3_months.iloc[1]['Avg_Down_Move']:+.2f}%)</li>
+                    <li><strong>{bot3_months.iloc[2]['Month_Full']}:</strong> {bot3_months.iloc[2]['Pos_Pct']:.1f}% Positive Months | Avg Move: <strong style="color:#f43f5e;">{bot3_months.iloc[2]['Avg_Move']:+.2f}%</strong> (Down Avg: {bot3_months.iloc[2]['Avg_Down_Move']:+.2f}%)</li>
                 </ul>
             </div>
             """, unsafe_allow_html=True)
@@ -635,7 +656,7 @@ def render_seasonality_section():
             with sec_col2:
                 sort_sec_by = st.selectbox(
                     "Rank Sectors By:",
-                    ["Average Move (%)", "Win Rate (%)", "Median Move (%)"],
+                    ["Average Move (%)", "% Positive Months", "Median Move (%)"],
                     index=0,
                     key="sec_sort_by"
                 )
@@ -652,9 +673,13 @@ def render_seasonality_section():
             sec_stats = stocks_m.group_by("industry").agg([
                 pl.len().alias("sample_candles"),
                 pl.col("symbol").n_unique().alias("stocks_in_sector"),
-                pl.col("is_positive").mean().mul(100.0).alias("win_rate"),
+                (pl.col("move_pct") > 0).sum().alias("pos_candles"),
+                (pl.col("move_pct") <= 0).sum().alias("neg_candles"),
+                pl.col("is_positive").mean().mul(100.0).alias("pos_pct"),
                 pl.col("move_pct").mean().alias("avg_move"),
                 pl.col("move_pct").median().alias("median_move"),
+                pl.col("move_pct").filter(pl.col("move_pct") > 0).mean().alias("avg_up_move"),
+                pl.col("move_pct").filter(pl.col("move_pct") < 0).mean().alias("avg_down_move"),
                 pl.col("move_pct").max().alias("max_gain"),
                 pl.col("move_pct").min().alias("max_drop")
             ]).to_pandas()
@@ -672,7 +697,7 @@ def render_seasonality_section():
             sec_stats['Top Performer Stock'] = sec_stats['industry'].map(top_stocks_per_sec)
 
             # Sort
-            sort_key = "avg_move" if "Average" in sort_sec_by else ("win_rate" if "Win" in sort_sec_by else "median_move")
+            sort_key = "avg_move" if "Average" in sort_sec_by else ("pos_pct" if "% Positive" in sort_sec_by else "median_move")
             sec_stats = sec_stats.sort_values(sort_key, ascending=False).reset_index(drop=True)
 
             # Leaderboard Display
@@ -680,9 +705,12 @@ def render_seasonality_section():
             show_sec_df = pd.DataFrame({
                 "Sector / Industry": sec_stats['industry'],
                 "Stocks": sec_stats['stocks_in_sector'],
-                "Win Rate (%)": sec_stats['win_rate'].apply(lambda x: f"{x:.1f}%"),
+                "Positive Months (%)": sec_stats['pos_pct'].apply(lambda x: f"{x:.1f}%"),
+                "Positive vs Negative": sec_stats.apply(lambda r: f"{r['pos_candles']}🟢 / {r['neg_candles']}🔴", axis=1),
                 "Avg Move (%)": sec_stats['avg_move'].apply(lambda x: f"{x:+.2f}%"),
                 "Median Move (%)": sec_stats['median_move'].apply(lambda x: f"{x:+.2f}%"),
+                "Avg Up Move (%)": sec_stats['avg_up_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
+                "Avg Down Move (%)": sec_stats['avg_down_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
                 "Best Historical Gain": sec_stats['max_gain'].apply(lambda x: f"{x:+.1f}%"),
                 "Max Drawdown": sec_stats['max_drop'].apply(lambda x: f"{x:+.1f}%"),
                 "Top Performer Stock (Avg)": sec_stats['Top Performer Stock']
@@ -694,16 +722,16 @@ def render_seasonality_section():
             st.markdown("#### 🗺️ Full 12-Month Sector Seasonality Matrix (Heatmap)")
             sec_all_m = stocks_pl.group_by(["industry", "month"]).agg([
                 pl.col("move_pct").mean().alias("avg_move"),
-                pl.col("is_positive").mean().mul(100.0).alias("win_rate")
+                pl.col("is_positive").mean().mul(100.0).alias("pos_pct")
             ]).to_pandas()
 
             matrix_metric = st.radio(
                 "Heatmap Metric:",
-                ["Average Monthly Return (%)", "Positive Win Rate (%)"],
+                ["Average Monthly Return (%)", "% Positive Months (Green)"],
                 horizontal=True,
                 key="sec_heatmap_metric"
             )
-            val_col = "avg_move" if "Average" in matrix_metric else "win_rate"
+            val_col = "avg_move" if "Average" in matrix_metric else "pos_pct"
             sec_matrix = sec_all_m.pivot(index="industry", columns="month", values=val_col)
             sec_matrix.columns = [MONTH_NAMES[m - 1] for m in sec_matrix.columns]
             for m_name in MONTH_NAMES:
@@ -727,20 +755,27 @@ def render_seasonality_section():
             sec_stocks_m = sec_stocks_pl.filter(pl.col("month") == chosen_sec_month)
             drill_stock_stats = sec_stocks_m.group_by(["symbol", "company_name"]).agg([
                 pl.len().alias("years"),
-                pl.col("is_positive").mean().mul(100.0).alias("win_rate"),
+                (pl.col("move_pct") > 0).sum().alias("pos_count"),
+                (pl.col("move_pct") <= 0).sum().alias("neg_count"),
+                pl.col("is_positive").mean().mul(100.0).alias("pos_pct"),
                 pl.col("move_pct").mean().alias("avg_move"),
                 pl.col("move_pct").median().alias("median_move"),
+                pl.col("move_pct").filter(pl.col("move_pct") > 0).mean().alias("avg_up_move"),
+                pl.col("move_pct").filter(pl.col("move_pct") < 0).mean().alias("avg_down_move"),
                 pl.col("move_pct").max().alias("max_gain"),
                 pl.col("move_pct").min().alias("max_drop")
-            ]).sort("win_rate", descending=True).to_pandas()
+            ]).sort("avg_move", descending=True).to_pandas()
 
             show_drill = pd.DataFrame({
                 "Symbol": drill_stock_stats['symbol'],
                 "Company Name": drill_stock_stats['company_name'],
-                "Sample Years": drill_stock_stats['years'],
-                "Win Rate (%)": drill_stock_stats['win_rate'].apply(lambda x: f"{x:.1f}%"),
+                "Total Years": drill_stock_stats['years'].apply(lambda x: f"{x} Yrs"),
+                "Positive Months": drill_stock_stats.apply(lambda r: f"{r['pos_count']}🟢 ({r['pos_pct']:.1f}%)", axis=1),
+                "Negative Months": drill_stock_stats.apply(lambda r: f"{r['neg_count']}🔴 ({100.0 - r['pos_pct']:.1f}%)", axis=1),
                 "Avg Move (%)": drill_stock_stats['avg_move'].apply(lambda x: f"{x:+.2f}%"),
                 "Median Move (%)": drill_stock_stats['median_move'].apply(lambda x: f"{x:+.2f}%"),
+                "Avg Up Move (%)": drill_stock_stats['avg_up_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
+                "Avg Down Move (%)": drill_stock_stats['avg_down_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
                 "Best Gain": drill_stock_stats['max_gain'].apply(lambda x: f"{x:+.1f}%"),
                 "Max Drop": drill_stock_stats['max_drop'].apply(lambda x: f"{x:+.1f}%")
             })
@@ -748,125 +783,267 @@ def render_seasonality_section():
             st.dataframe(show_drill, width="stretch", hide_index=True)
 
     # =============================================================
-    # TAB 3: NIFTY 50 STOCKS SEASONALITY
+    # TAB 3: STOCK SEASONALITY PERFORMANCE (NIFTY 50, SECTORAL & ALL STOCKS)
     # =============================================================
     with s_tab3:
-        st.subheader("🎯 Nifty 50 Constituents Monthly Performance")
-        st.markdown(f"Seasonality audit of all **50 Nifty 50 constituent stocks** across **{filter_min_yr} to {filter_max_yr}**.")
+        st.subheader("🎯 Stock Seasonality Performance (Nifty 50, Sectoral & All Stocks)")
+        st.markdown(f"Detailed month-wise moves, directional tendency, and historical up/down magnitude across **{filter_min_yr} to {filter_max_yr}**.")
 
         if stocks_pl.is_empty():
             st.warning("Stock monthly parquets not found.")
         else:
-            nifty50_pl = stocks_pl.filter(pl.col("is_nifty50"))
-
-            # Controls
-            n50_c1, n50_c2, n50_c3 = st.columns([1.8, 1.8, 2.4])
-            with n50_c1:
-                chosen_n50_month_name = st.selectbox(
-                    "📅 Scout Calendar Month:",
-                    MONTH_FULL_NAMES,
-                    index=cur_month_idx - 1,
-                    key="n50_chosen_month"
-                )
-                chosen_n50_m = MONTH_FULL_NAMES.index(chosen_n50_month_name) + 1
-
-            with n50_c2:
-                n50_sort_by = st.selectbox(
-                    "Sort Nifty 50 By:",
-                    ["Win Rate (%)", "Average Move (%)", "Median Move (%)"],
-                    index=0,
-                    key="n50_sort_by"
-                )
-
-            with n50_c3:
-                n50_filter_tag = st.selectbox(
-                    "Quick Reliability Filter:",
+            # Universe Selection Bar
+            u_col1, u_col2, u_col3 = st.columns([2.0, 2.0, 2.0])
+            with u_col1:
+                scope_choice = st.radio(
+                    "🎯 Select Stock Universe:",
                     [
-                        "All 50 Stocks",
-                        "🟢 Highly Consistent (Win Rate >= 65%)",
-                        "🚀 Highest Movers (Avg Return >= +3.0%)",
-                        "🔴 Vulnerable / Bearish (Win Rate <= 40%)"
+                        "🎯 NIFTY 50 Constituents (50 Stocks)",
+                        "🏢 Sectoral / Industry Group",
+                        "🌐 All 500 Nifty Equities"
                     ],
                     index=0,
-                    key="n50_filter_tag"
+                    key="sec4_stock_scope"
                 )
 
-            # Aggregate Nifty 50 for chosen month
-            n50_month_sub = nifty50_pl.filter(pl.col("month") == chosen_n50_m)
-            n50_agg = n50_month_sub.group_by(["symbol", "company_name", "industry"]).agg([
-                pl.len().alias("sample_years"),
-                pl.col("is_positive").mean().mul(100.0).alias("win_rate"),
-                pl.col("move_pct").mean().alias("avg_move"),
-                pl.col("move_pct").median().alias("median_move"),
-                pl.col("move_pct").max().alias("max_gain"),
-                pl.col("move_pct").min().alias("max_drop")
-            ]).to_pandas()
+            with u_col2:
+                if "Sectoral" in scope_choice:
+                    all_sectors_list = sorted(stocks_pl["industry"].unique().to_list())
+                    chosen_sec_filter = st.selectbox(
+                        "🏢 Pick Industry / Sector:",
+                        all_sectors_list,
+                        index=0,
+                        key="sec4_stock_chosen_sec"
+                    )
+                else:
+                    chosen_sec_filter = None
+                    st.markdown("""
+                    <div style="font-size:12px; color:#94a3b8; margin-top:28px;">
+                        Filter active: <strong>Nifty 50</strong> or <strong>All Equities</strong>.
+                    </div>
+                    """, unsafe_allow_html=True)
 
-            # Filter tags
-            if "Highly Consistent" in n50_filter_tag:
-                n50_agg = n50_agg[n50_agg['win_rate'] >= 65.0]
-            elif "Highest Movers" in n50_filter_tag:
-                n50_agg = n50_agg[n50_agg['avg_move'] >= 3.0]
-            elif "Vulnerable" in n50_filter_tag:
-                n50_agg = n50_agg[n50_agg['win_rate'] <= 40.0]
+            with u_col3:
+                view_mode = st.radio(
+                    "📊 Choose Display View:",
+                    [
+                        "📅 Month-by-Month Full Matrix (Jan – Dec)",
+                        "🎯 Single Month Detail (Deep Breakdown)"
+                    ],
+                    index=0,
+                    key="sec4_stock_view_mode"
+                )
 
-            sort_col = "win_rate" if "Win" in n50_sort_by else ("avg_move" if "Average" in n50_sort_by else "median_move")
-            n50_agg = n50_agg.sort_values(sort_col, ascending=False).reset_index(drop=True)
+            # Filter stocks_pl based on scope_choice
+            if "NIFTY 50" in scope_choice:
+                scoped_stocks_pl = stocks_pl.filter(pl.col("is_nifty50"))
+                scope_label = "Nifty 50 Constituents"
+            elif "Sectoral" in scope_choice and chosen_sec_filter:
+                scoped_stocks_pl = stocks_pl.filter(pl.col("industry") == chosen_sec_filter)
+                scope_label = f"Sector: {chosen_sec_filter}"
+            else:
+                scoped_stocks_pl = stocks_pl
+                scope_label = "All 500 Nifty Equities"
 
-            st.markdown(f"#### 🏆 Nifty 50 Seasonality Leaderboard in {chosen_n50_month_name} ({len(n50_agg)} Stocks)")
-            show_n50 = pd.DataFrame({
-                "Symbol": n50_agg['symbol'],
-                "Company Name": n50_agg['company_name'],
-                "Sector": n50_agg['industry'],
-                "Sample Years": n50_agg['sample_years'],
-                "Win Rate (%)": n50_agg['win_rate'].apply(lambda x: f"{x:.1f}%"),
-                "Avg Move (%)": n50_agg['avg_move'].apply(lambda x: f"{x:+.2f}%"),
-                "Median Move (%)": n50_agg['median_move'].apply(lambda x: f"{x:+.2f}%"),
-                "Best Gain": n50_agg['max_gain'].apply(lambda x: f"{x:+.1f}%"),
-                "Max Drop": n50_agg['max_drop'].apply(lambda x: f"{x:+.1f}%")
-            })
-            st.dataframe(show_n50, width="stretch", hide_index=True)
+            # -------------------------------------------------------------
+            # VIEW 1: MONTH-BY-MONTH FULL MATRIX (JAN – DEC)
+            # -------------------------------------------------------------
+            if "Month-by-Month Full Matrix" in view_mode:
+                st.markdown(f"#### 📅 12-Month Performance Matrix for **{scope_label}**")
+                st.markdown("Shows the average move in each calendar month (Jan–Dec), total evaluated months, and the exact count of positive vs. negative months.")
 
-            # Full 50 Stocks x 12 Months Heatmap
-            st.markdown("---")
-            st.markdown("#### 🗺️ Nifty 50 Full Seasonality Matrix Heatmap (All 12 Months)")
-            n50_all_m = nifty50_pl.group_by(["symbol", "month"]).agg([
-                pl.col("move_pct").mean().alias("avg_move"),
-                pl.col("is_positive").mean().mul(100.0).alias("win_rate")
-            ]).to_pandas()
+                # Overall stats per stock across all months
+                overall_stats = scoped_stocks_pl.group_by(["symbol", "company_name", "industry"]).agg([
+                    pl.len().alias("total_months"),
+                    (pl.col("move_pct") > 0).sum().alias("pos_months_cnt"),
+                    (pl.col("move_pct") <= 0).sum().alias("neg_months_cnt"),
+                    ((pl.col("move_pct") > 0).mean() * 100.0).alias("overall_pos_pct"),
+                    pl.col("move_pct").mean().alias("overall_avg_move")
+                ]).to_pandas()
 
-            n50_mat_metric = st.radio(
-                "Nifty 50 Heatmap Metric:",
-                ["Average Monthly Return (%)", "Positive Win Rate (%)"],
-                horizontal=True,
-                key="n50_heat_metric"
-            )
-            v_col = "avg_move" if "Average" in n50_mat_metric else "win_rate"
-            n50_matrix = n50_all_m.pivot(index="symbol", columns="month", values=v_col)
-            n50_matrix.columns = [MONTH_NAMES[m - 1] for m in n50_matrix.columns]
-            for m_name in MONTH_NAMES:
-                if m_name not in n50_matrix.columns:
-                    n50_matrix[m_name] = np.nan
-            n50_matrix = n50_matrix[MONTH_NAMES]
+                # Month-wise average move per stock
+                m_avg_pl = scoped_stocks_pl.group_by(["symbol", "month"]).agg([
+                    pl.col("move_pct").mean().alias("avg_m_move")
+                ]).to_pandas()
 
-            fig_n50_heat = plot_sector_matrix_heatmap(
-                n50_matrix,
-                title=f"Nifty 50 Stocks Month-Wise {n50_mat_metric} ({filter_min_yr} – {filter_max_yr})"
-            )
-            st.plotly_chart(fig_n50_heat, width="stretch")
+                pivot_m = m_avg_pl.pivot(index="symbol", columns="month", values="avg_m_move")
+                for m_idx in range(1, 13):
+                    if m_idx not in pivot_m.columns:
+                        pivot_m[m_idx] = np.nan
+                pivot_m = pivot_m[range(1, 13)]
+                pivot_m.columns = MONTH_NAMES
+
+                merged_matrix = overall_stats.merge(pivot_m, on="symbol")
+
+                # Controls above table
+                c_sort1, c_sort2, c_search = st.columns([1.8, 1.8, 2.4])
+                with c_sort1:
+                    sort_m_col = st.selectbox(
+                        "Sort Matrix By:",
+                        ["Overall Positive %", "Overall Avg Move %"] + MONTH_NAMES,
+                        index=0,
+                        key="sec4_matrix_sort_col"
+                    )
+                with c_sort2:
+                    sort_m_dir = st.radio("Sort Order:", ["Highest to Lowest", "Lowest to Highest"], horizontal=True, key="sec4_matrix_sort_dir")
+                with c_search:
+                    search_q = st.text_input("🔍 Search Stock Symbol or Name:", "", key="sec4_matrix_search_q")
+
+                if search_q:
+                    q_lower = search_q.strip().lower()
+                    merged_matrix = merged_matrix[
+                        merged_matrix['symbol'].str.lower().str.contains(q_lower) |
+                        merged_matrix['company_name'].str.lower().str.contains(q_lower)
+                    ]
+
+                # Sorting logic
+                asc = (sort_m_dir == "Lowest to Highest")
+                if sort_m_col == "Overall Positive %":
+                    merged_matrix = merged_matrix.sort_values("overall_pos_pct", ascending=asc)
+                elif sort_m_col == "Overall Avg Move %":
+                    merged_matrix = merged_matrix.sort_values("overall_avg_move", ascending=asc)
+                elif sort_m_col in MONTH_NAMES:
+                    merged_matrix = merged_matrix.sort_values(sort_m_col, ascending=asc)
+
+                # Format DataFrame for display
+                display_matrix = pd.DataFrame()
+                display_matrix["Symbol"] = merged_matrix["symbol"]
+                display_matrix["Company Name"] = merged_matrix["company_name"]
+                display_matrix["Sector"] = merged_matrix["industry"]
+
+                for m_col in MONTH_NAMES:
+                    display_matrix[m_col] = merged_matrix[m_col].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-")
+
+                display_matrix["Total Months"] = merged_matrix["total_months"]
+                display_matrix["Positive Months"] = merged_matrix.apply(lambda r: f"{r['pos_months_cnt']}🟢 ({r['overall_pos_pct']:.1f}%)", axis=1)
+                display_matrix["Negative Months"] = merged_matrix.apply(lambda r: f"{r['neg_months_cnt']}🔴 ({100.0 - r['overall_pos_pct']:.1f}%)", axis=1)
+                display_matrix["Overall Avg Move"] = merged_matrix["overall_avg_move"].apply(lambda x: f"{x:+.2f}%")
+
+                st.dataframe(display_matrix, width="stretch", hide_index=True)
+
+                # Heatmap visualization
+                st.markdown("---")
+                st.markdown(f"#### 🗺️ {scope_label} Monthly Returns Heatmap Matrix")
+                heat_sub = merged_matrix.head(50)
+                heat_pivot = heat_sub.set_index("symbol")[MONTH_NAMES]
+                fig_heat = plot_sector_matrix_heatmap(
+                    heat_pivot,
+                    title=f"{scope_label} — Average Monthly Returns (%) ({filter_min_yr} – {filter_max_yr})"
+                )
+                st.plotly_chart(fig_heat, width="stretch")
+
+            # -------------------------------------------------------------
+            # VIEW 2: SINGLE MONTH DETAIL (DEEP BREAKDOWN)
+            # -------------------------------------------------------------
+            else:
+                f_c1, f_c2, f_c3, f_c4 = st.columns([1.8, 1.8, 1.8, 2.0])
+                with f_c1:
+                    chosen_m_name = st.selectbox(
+                        "📅 Calendar Month:",
+                        MONTH_FULL_NAMES,
+                        index=cur_month_idx - 1,
+                        key="sec4_single_m_name"
+                    )
+                    chosen_m_num = MONTH_FULL_NAMES.index(chosen_m_name) + 1
+                with f_c2:
+                    min_years_req = st.selectbox(
+                        "Minimum History:",
+                        ["All Available Years", "At least 3 Years", "At least 5 Years", "At least 10 Years"],
+                        index=0,
+                        key="sec4_min_years"
+                    )
+                with f_c3:
+                    tendency_filter = st.selectbox(
+                        "Tendency Filter:",
+                        [
+                            "All Stocks in Universe",
+                            "🟢 Positive Avg Move (> 0.0%)",
+                            "🔴 Negative Avg Move (< 0.0%)",
+                            "🚀 Strong Movers (Avg >= +3.0%)",
+                            "🛡️ Mostly Positive (>= 65% Positive)"
+                        ],
+                        index=0,
+                        key="sec4_tendency_filter"
+                    )
+                with f_c4:
+                    sort_single_by = st.selectbox(
+                        "Sort Stocks By:",
+                        ["Average Move (%)", "% Positive Months", "Median Move (%)", "Total Years"],
+                        index=0,
+                        key="sec4_sort_single_by"
+                    )
+
+                # Filter by month
+                month_sub_pl = scoped_stocks_pl.filter(pl.col("month") == chosen_m_num)
+                month_agg = month_sub_pl.group_by(["symbol", "company_name", "industry"]).agg([
+                    pl.len().alias("sample_years"),
+                    (pl.col("move_pct") > 0).sum().alias("pos_count"),
+                    (pl.col("move_pct") <= 0).sum().alias("neg_count"),
+                    ((pl.col("move_pct") > 0).mean() * 100.0).alias("pos_pct"),
+                    pl.col("move_pct").mean().alias("avg_move"),
+                    pl.col("move_pct").median().alias("median_move"),
+                    pl.col("move_pct").filter(pl.col("move_pct") > 0).mean().alias("avg_up_move"),
+                    pl.col("move_pct").filter(pl.col("move_pct") < 0).mean().alias("avg_down_move"),
+                    pl.col("move_pct").max().alias("max_gain"),
+                    pl.col("move_pct").min().alias("max_drop")
+                ]).to_pandas()
+
+                # Filter by min years
+                if "3 Years" in min_years_req:
+                    month_agg = month_agg[month_agg['sample_years'] >= 3]
+                elif "5 Years" in min_years_req:
+                    month_agg = month_agg[month_agg['sample_years'] >= 5]
+                elif "10 Years" in min_years_req:
+                    month_agg = month_agg[month_agg['sample_years'] >= 10]
+
+                # Filter by tendency
+                if "Positive Avg Move" in tendency_filter:
+                    month_agg = month_agg[month_agg['avg_move'] > 0.0]
+                elif "Negative Avg Move" in tendency_filter:
+                    month_agg = month_agg[month_agg['avg_move'] < 0.0]
+                elif "Strong Movers" in tendency_filter:
+                    month_agg = month_agg[month_agg['avg_move'] >= 3.0]
+                elif "Mostly Positive" in tendency_filter:
+                    month_agg = month_agg[month_agg['pos_pct'] >= 65.0]
+
+                # Sort
+                if "% Positive" in sort_single_by:
+                    month_agg = month_agg.sort_values("pos_pct", ascending=False)
+                elif "Average" in sort_single_by:
+                    month_agg = month_agg.sort_values("avg_move", ascending=False)
+                elif "Median" in sort_single_by:
+                    month_agg = month_agg.sort_values("median_move", ascending=False)
+                else:
+                    month_agg = month_agg.sort_values("sample_years", ascending=False)
+
+                st.markdown(f"#### 🏆 {scope_label} Seasonality Leaderboard in {chosen_m_name} ({len(month_agg)} Stocks)")
+                show_single_df = pd.DataFrame({
+                    "Symbol": month_agg['symbol'],
+                    "Company Name": month_agg['company_name'],
+                    "Sector": month_agg['industry'],
+                    "Average Move (%)": month_agg['avg_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
+                    "Median Move (%)": month_agg['median_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
+                    "Total Years": month_agg['sample_years'].apply(lambda x: f"{x} Yrs"),
+                    "Positive Months": month_agg.apply(lambda r: f"{r['pos_count']}🟢 ({r['pos_pct']:.1f}%)", axis=1),
+                    "Negative Months": month_agg.apply(lambda r: f"{r['neg_count']}🔴 ({100.0 - r['pos_pct']:.1f}%)", axis=1),
+                    "Avg Up Move (%)": month_agg['avg_up_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
+                    "Avg Down Move (%)": month_agg['avg_down_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
+                    "Best Historical Gain": month_agg['max_gain'].apply(lambda x: f"{x:+.1f}%" if pd.notna(x) else "-"),
+                    "Max Drawdown": month_agg['max_drop'].apply(lambda x: f"{x:+.1f}%" if pd.notna(x) else "-")
+                })
+                st.dataframe(show_single_df, width="stretch", hide_index=True)
 
     # =============================================================
     # TAB 4: INDIVIDUAL STOCK DEEP-DIVE (500 STOCKS)
     # =============================================================
     with s_tab4:
         st.subheader("🔍 Individual Stock Seasonality Deep-Dive (Nifty 500)")
-        st.markdown("Search or select **any of the 500 Nifty Equities** for complete 12-month historical breakdown, Win Rate statistics, and Year-by-Year heatmaps.")
+        st.markdown("Search or select **any of the 500 Nifty Equities** for complete 12-month historical breakdown, directional probabilities, and Year-by-Year heatmaps.")
 
         if stocks_pl.is_empty():
             st.warning("Stock monthly parquets not found.")
         else:
             all_syms = sorted(stocks_pl["symbol"].unique().to_list())
-            # Format with company name for search
             sym_display_list = [f"{s} - {sym_to_comp.get(s, s)} ({sym_to_ind.get(s, 'Stock')})" for s in all_syms]
 
             default_idx = 0
@@ -908,18 +1085,20 @@ def render_seasonality_section():
                 stock_stats = compute_monthly_summary(stock_pl_sub)
 
                 # Best Month & Worst Month Highlights
-                s_by_wr = stock_stats.sort_values('Win_Rate', ascending=False)
-                best_m = s_by_wr.iloc[0]
-                worst_m = s_by_wr.iloc[-1]
+                s_by_pos = stock_stats.sort_values('Pos_Pct', ascending=False)
+                best_m = s_by_pos.iloc[0]
+                worst_m = s_by_pos.iloc[-1]
 
                 hc1, hc2, hc3, hc4 = st.columns(4)
                 with hc1:
-                    st.markdown(f"""<div class='metric-card'><span class='metric-label'>Strongest Month</span><div class='metric-value' style='color:#00d26a;'>{best_m['Month']} ({best_m['Win_Rate']:.1f}%)</div><span style='font-size:11px;color:#94a3b8;'>Avg Return: {best_m['Avg_Move']:+.2f}%</span></div>""", unsafe_allow_html=True)
+                    st.markdown(f"""<div class='metric-card'><span class='metric-label'>Strongest Positive Month</span><div class='metric-value' style='color:#00d26a;'>{best_m['Month']} ({best_m['Pos_Pct']:.1f}%)</div><span style='font-size:11px;color:#94a3b8;'>Avg Return: {best_m['Avg_Move']:+.2f}%</span></div>""", unsafe_allow_html=True)
                 with hc2:
-                    st.markdown(f"""<div class='metric-card'><span class='metric-label'>Weakest Month</span><div class='metric-value' style='color:#f43f5e;'>{worst_m['Month']} ({worst_m['Win_Rate']:.1f}%)</div><span style='font-size:11px;color:#94a3b8;'>Avg Return: {worst_m['Avg_Move']:+.2f}%</span></div>""", unsafe_allow_html=True)
+                    st.markdown(f"""<div class='metric-card'><span class='metric-label'>Most Vulnerable Month</span><div class='metric-value' style='color:#f43f5e;'>{worst_m['Month']} ({worst_m['Pos_Pct']:.1f}%)</div><span style='font-size:11px;color:#94a3b8;'>Avg Return: {worst_m['Avg_Move']:+.2f}%</span></div>""", unsafe_allow_html=True)
                 with hc3:
                     overall_wr = (stock_pl_sub['is_positive'].mean()) * 100.0
-                    st.markdown(f"""<div class='metric-card'><span class='metric-label'>Overall Green Months</span><div class='metric-value' style='color:#38bdf8;'>{overall_wr:.1f}%</div><span style='font-size:11px;color:#94a3b8;'>Across all historical months</span></div>""", unsafe_allow_html=True)
+                    pos_tot = int(stock_pl_sub['is_positive'].sum())
+                    tot_all = len(stock_pl_sub)
+                    st.markdown(f"""<div class='metric-card'><span class='metric-label'>Overall Positive Months</span><div class='metric-value' style='color:#38bdf8;'>{overall_wr:.1f}%</div><span style='font-size:11px;color:#94a3b8;'>{pos_tot}🟢 / {tot_all} Months</span></div>""", unsafe_allow_html=True)
                 with hc4:
                     overall_avg = stock_pl_sub['move_pct'].mean()
                     st.markdown(f"""<div class='metric-card'><span class='metric-label'>Overall Monthly Avg</span><div class='metric-value' style='color:#fbbf24;'>{overall_avg:+.2f}%</div><span style='font-size:11px;color:#94a3b8;'>Average monthly move</span></div>""", unsafe_allow_html=True)
@@ -930,10 +1109,12 @@ def render_seasonality_section():
                 show_stk_df = pd.DataFrame({
                     "Month": stock_stats['Month_Full'],
                     "Sample Years": stock_stats['Total_Years'],
-                    "Win Rate (%)": stock_stats['Win_Rate'].apply(lambda x: f"{x:.1f}%"),
-                    "Avg Move (%)": stock_stats['Avg_Move'].apply(lambda x: f"{x:+.2f}%"),
+                    "Positive Months": stock_stats.apply(lambda r: f"{r['Pos_Count']}🟢 ({r['Pos_Pct']:.1f}%)", axis=1),
+                    "Negative Months": stock_stats.apply(lambda r: f"{r['Neg_Count']}🔴 ({r['Neg_Pct']:.1f}%)", axis=1),
+                    "Average Move (%)": stock_stats['Avg_Move'].apply(lambda x: f"{x:+.2f}%"),
                     "Median Move (%)": stock_stats['Median_Move'].apply(lambda x: f"{x:+.2f}%"),
-                    "Green / Red Count": stock_stats.apply(lambda r: f"{r['Pos_Count']}🟢 / {r['Neg_Count']}🔴", axis=1),
+                    "Avg Up Move (%)": stock_stats['Avg_Up_Move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
+                    "Avg Down Move (%)": stock_stats['Avg_Down_Move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
                     "Best Year Gain": stock_stats.apply(lambda r: f"{r['Best_Move']:+.1f}% ({r['Best_Year']})", axis=1),
                     "Max Drawdown": stock_stats.apply(lambda r: f"{r['Worst_Move']:+.1f}% ({r['Worst_Year']})", axis=1)
                 })
