@@ -21,6 +21,13 @@ A comprehensive, institutional-grade market analytics platform combining statist
   - **⚡ Nifty 50 Spot & Index:** Maintains **1-Minute Precision Spot History** (`nifty_1min_2015_2026.parquet`) and **Daily / Weekly Higher Timeframes** (`nifty_daily_data_raw.parquet`, `nifty_weekly_data_raw.parquet`) with instant incremental partial syncs.
   - **🏢 Nifty 500 Equities:** One-click batch downloader for all 501 symbols from `ind_nifty500list.csv` converting in-memory directly to Apache Parquet (Daily, Weekly, Monthly) with automated retry for failed downloads.
 
+### 🗓️ Section 4: Monthly Seasonality Analytics (Nifty, Sectors & Stocks)
+- Complete monthly calendar seasonality profiling across four distinct analytical dimensions:
+  - **📈 NIFTY 50 Index Seasonality:** 12-month performance breakdown (Jan–Dec), Win Rates (% Green), Average & Median Returns, 30-year Year-by-Year Historical Matrix Heatmap.
+  - **🏢 Sectoral Seasonality (20 Sectors):** Month-by-month sector ranking leaderboards, top/bottom stock performers per sector, and 20 Sectors x 12 Months comparative heatmap.
+  - **🎯 Nifty 50 Stocks Seasonality:** Heavyweight constituent monthly leaderboards with reliability filters (Consistent Gainers >= 65%, High Movers >= 3%, Vulnerable Stocks <= 40%).
+  - **🔍 Individual Stock Deep-Dive (500 Stocks):** Searchable deep dive for ANY stock in Nifty 500 with full 12-month scorecard, dual bar chart, and year-by-year return matrix.
+
 ---
 
 ## 🚀 Running Locally

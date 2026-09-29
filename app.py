@@ -1,5 +1,10 @@
 import sys
 import os
+
+_app_dir = os.path.dirname(os.path.abspath(__file__))
+if _app_dir not in sys.path:
+    sys.path.insert(0, _app_dir)
+
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 # Auto-launch via streamlit CLI if executed directly with "python <script>.py"
@@ -154,7 +159,8 @@ with st.sidebar:
     nav_options = [
         "📊 Section 1: Range & Move Distribution",
         "🔄 Section 2: First-Touch Stretch & Reversals",
-        "📥 Section 3: Automated Market Data Downloader (Nifty & Stocks)"
+        "📥 Section 3: Automated Market Data Downloader (Nifty & Stocks)",
+        "🗓️ Section 4: Monthly Seasonality (Nifty, Sectors & Stocks)"
     ]
     
     default_nav_idx = 0
@@ -994,7 +1000,7 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
 # =============================================================
 # SECTION 3: AUTOMATED MARKET DATA DOWNLOADER (NIFTY & STOCKS)
 # =============================================================
-elif "Data Downloader" in nav_selection or "Section 3" in nav_selection or "Nifty 500" in nav_selection or "Nifty Automated" in nav_selection:
+elif "Data Downloader" in nav_selection or "Section 3" in nav_selection:
     try:
         import local_data_automation
         if not hasattr(local_data_automation, "render_unified_downloader_section"):
@@ -1003,6 +1009,21 @@ elif "Data Downloader" in nav_selection or "Section 3" in nav_selection or "Nift
         local_data_automation.render_unified_downloader_section()
     except Exception as e:
         st.error(f"### ⚠️ Failed to load Section 3 (Market Data Downloader): {e}")
+        st.info("💡 **Tip**: If you recently updated the app, please click **'Manage app'** (lower-right corner) ➔ **'Reboot app'**.")
+        import traceback
+        st.code(traceback.format_exc(), language="python")
+
+# =============================================================
+# SECTION 4: MONTHLY SEASONALITY ANALYTICS (NIFTY, SECTORS & STOCKS)
+# =============================================================
+elif "Seasonality" in nav_selection or "Section 4" in nav_selection:
+    try:
+        import seasonality_analytics
+        import importlib
+        seasonality_analytics = importlib.reload(seasonality_analytics)
+        seasonality_analytics.render_seasonality_section()
+    except Exception as e:
+        st.error(f"### ⚠️ Failed to load Section 4 (Seasonality Analytics): {e}")
         st.info("💡 **Tip**: If you recently updated the app, please click **'Manage app'** (lower-right corner) ➔ **'Reboot app'**.")
         import traceback
         st.code(traceback.format_exc(), language="python")
