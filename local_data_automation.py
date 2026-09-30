@@ -157,7 +157,7 @@ def calculate_bars_to_fetch(last_dt, timeframe="daily", full_bars_count=8000):
 
 
 def save_parquet_to_destinations(df, sym, timeframe):
-    """Saves dataframe to local, alternate, and deployment parquet directories."""
+    """Saves dataframe to local, alternate, and deployment parquet directories with guaranteed deduplication."""
     tf = timeframe.lower()
     filename = f"{sym}_{tf}_data_raw.parquet"
     has_alt = os.path.exists(ALT_SYNC_DAILY) and ALT_SYNC_DAILY != LOCAL_STOCK_DAILY_DIR
@@ -173,16 +173,38 @@ def save_parquet_to_destinations(df, sym, timeframe):
         loc_p = os.path.join(LOCAL_STOCK_MONTHLY_DIR, filename)
         alt_p = os.path.join(ALT_SYNC_MONTHLY, filename)
         dep_p = os.path.join(DEPLOY_STOCK_MONTHLY_DIR, filename) if has_deploy else None
-        
-    df.to_parquet(loc_p, index=False)
+
+    # Guaranteed Period Deduplication before writing to disk
+    df_to_save = df.copy()
+    if not df_to_save.empty and 'datetime' in df_to_save.columns:
+        df_to_save['datetime'] = pd.to_datetime(df_to_save['datetime'])
+        df_to_save = df_to_save.sort_values('datetime')
+        if tf == "monthly":
+            yr = df_to_save['datetime'].dt.year
+            mo = df_to_save['datetime'].dt.month
+            ym = list(zip(yr, mo))
+            df_to_save = df_to_save.loc[~pd.Series(ym, index=df_to_save.index).duplicated(keep='last')]
+        elif tf == "weekly":
+            yr = df_to_save['datetime'].dt.isocalendar().year
+            wk = df_to_save['datetime'].dt.isocalendar().week
+            yw = list(zip(yr, wk))
+            df_to_save = df_to_save.loc[~pd.Series(yw, index=df_to_save.index).duplicated(keep='last')]
+        elif tf == "daily":
+            d_only = df_to_save['datetime'].dt.date
+            df_to_save = df_to_save.loc[~d_only.duplicated(keep='last')]
+        else:
+            df_to_save = df_to_save.drop_duplicates(subset=['datetime'], keep='last')
+        df_to_save = df_to_save.reset_index(drop=True)
+
+    df_to_save.to_parquet(loc_p, index=False)
     if has_alt and os.path.abspath(loc_p) != os.path.abspath(alt_p):
         try:
-            df.to_parquet(alt_p, index=False)
+            df_to_save.to_parquet(alt_p, index=False)
         except Exception:
             pass
     if dep_p and os.path.exists(os.path.dirname(dep_p)):
         try:
-            df.to_parquet(dep_p, index=False)
+            df_to_save.to_parquet(dep_p, index=False)
         except Exception:
             pass
 
@@ -234,8 +256,21 @@ def sync_timeframe_data(tv, sym, tf_name, interval, full_bars, sync_mode="increm
         new_bars_count = len(new_bars_only)
         
         df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-        df_combined.drop_duplicates(subset=['datetime'], keep='last', inplace=True)
         df_combined.sort_values('datetime', inplace=True)
+
+        # Deduplicate by timeframe period
+        if tf_name.lower() == "monthly":
+            yr = df_combined['datetime'].dt.year
+            mo = df_combined['datetime'].dt.month
+            df_combined = df_combined.loc[~pd.Series(list(zip(yr, mo)), index=df_combined.index).duplicated(keep='last')]
+        elif tf_name.lower() == "weekly":
+            yr = df_combined['datetime'].dt.isocalendar().year
+            wk = df_combined['datetime'].dt.isocalendar().week
+            df_combined = df_combined.loc[~pd.Series(list(zip(yr, wk)), index=df_combined.index).duplicated(keep='last')]
+        else:
+            d_only = df_combined['datetime'].dt.date
+            df_combined = df_combined.loc[~d_only.duplicated(keep='last')]
+
         df_combined.reset_index(drop=True, inplace=True)
         new_last_dt = df_combined['datetime'].max()
         
@@ -254,7 +289,20 @@ def sync_timeframe_data(tv, sym, tf_name, interval, full_bars, sync_mode="increm
         return True, detail, new_bars_count, None
     else:
         # Full sync or new stock
-        df_combined = df_new.sort_values('datetime').reset_index(drop=True)
+        df_combined = df_new.sort_values('datetime')
+        if tf_name.lower() == "monthly":
+            yr = df_combined['datetime'].dt.year
+            mo = df_combined['datetime'].dt.month
+            df_combined = df_combined.loc[~pd.Series(list(zip(yr, mo)), index=df_combined.index).duplicated(keep='last')]
+        elif tf_name.lower() == "weekly":
+            yr = df_combined['datetime'].dt.isocalendar().year
+            wk = df_combined['datetime'].dt.isocalendar().week
+            df_combined = df_combined.loc[~pd.Series(list(zip(yr, wk)), index=df_combined.index).duplicated(keep='last')]
+        else:
+            d_only = df_combined['datetime'].dt.date
+            df_combined = df_combined.loc[~d_only.duplicated(keep='last')]
+
+        df_combined = df_combined.reset_index(drop=True)
         new_last_dt = df_combined['datetime'].max()
         new_bars_count = len(df_combined)
         

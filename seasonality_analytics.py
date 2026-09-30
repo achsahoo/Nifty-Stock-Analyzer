@@ -108,6 +108,8 @@ def load_all_monthly_stocks_df():
         ((combined["low"] - combined["open"]) / combined["open"] * 100.0).alias("low_drop_pct"),
         (combined["close"] > combined["open"]).alias("is_positive")
     ])
+    # Guaranteed deduplication per symbol, year, and month keeping latest candle
+    combined = combined.sort("datetime").unique(subset=["symbol", "year", "month"], keep="last")
     return combined
 
 
@@ -125,6 +127,7 @@ def load_nifty_monthly_seasonality_df():
     df['is_positive'] = df['close'] > df['open']
     df['high_stretch_pct'] = (df['high'] - df['open']) / df['open'] * 100.0
     df['low_drop_pct'] = (df['low'] - df['open']) / df['open'] * 100.0
+    df = df.sort_values('date').drop_duplicates(subset=['year', 'month'], keep='last').reset_index(drop=True)
     return df
 
 
@@ -137,9 +140,23 @@ def compute_monthly_summary(df, date_col='date', move_col='move_pct'):
     Returns a DataFrame with 12 rows (Jan..Dec) containing positive frequency, avg/median move,
     avg up move, avg down move, best, worst.
     """
+    if df.empty:
+        return pd.DataFrame()
+
+    # Ensure strictly unique per (year, month) to avoid double counting
+    df_clean = df.copy()
+    if 'year' in df_clean.columns and 'month' in df_clean.columns:
+        if 'datetime' in df_clean.columns:
+            df_clean = df_clean.sort_values('datetime')
+        elif 'date' in df_clean.columns:
+            df_clean = df_clean.sort_values('date')
+        df_clean = df_clean.drop_duplicates(subset=['year', 'month'], keep='last')
+    else:
+        df_clean = df
+
     stats = []
     for m in range(1, 13):
-        m_sub = df[df['month'] == m]
+        m_sub = df_clean[df_clean['month'] == m]
         tot = len(m_sub)
         if tot == 0:
             stats.append({
@@ -213,11 +230,21 @@ def compute_monthly_summary(df, date_col='date', move_col='move_pct'):
 def build_year_matrix(df, move_col='move_pct'):
     """
     Builds a Year x Month pivot table with annual return.
+    Guaranteed deduplication by (year, month) to prevent reshape errors.
     """
     if df.empty:
         return pd.DataFrame()
 
-    pivot = df.pivot(index='year', columns='month', values=move_col)
+    df_clean = df.copy()
+    if 'datetime' in df_clean.columns:
+        df_clean = df_clean.sort_values('datetime')
+    elif 'date' in df_clean.columns:
+        df_clean = df_clean.sort_values('date')
+
+    # Strictly deduplicate on ('year', 'month') keeping the latest candle
+    df_clean = df_clean.drop_duplicates(subset=['year', 'month'], keep='last')
+
+    pivot = df_clean.pivot_table(index='year', columns='month', values=move_col, aggfunc='last')
     pivot.columns = [MONTH_NAMES[m - 1] for m in pivot.columns]
 
     # Reindex to ensure all 12 months present
@@ -229,7 +256,7 @@ def build_year_matrix(df, move_col='move_pct'):
     # Calculate Annual Return from Jan Open to Dec Close (or sum of compounding returns)
     annual_moves = []
     for yr in pivot.index:
-        yr_df = df[df['year'] == yr].sort_values('month')
+        yr_df = df_clean[df_clean['year'] == yr].sort_values('month')
         if not yr_df.empty:
             yr_open = yr_df['open'].iloc[0]
             yr_close = yr_df['close'].iloc[-1]
