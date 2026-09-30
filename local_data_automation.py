@@ -249,13 +249,21 @@ def sync_timeframe_data(tv, sym, tf_name, interval, full_bars, sync_mode="increm
             
     n_bars = calculate_bars_to_fetch(last_dt, tf_name, full_bars) if sync_mode == "incremental" else full_bars
     
-    try:
-        df_new = tv.get_hist(symbol=sym, exchange='NSE', interval=interval, n_bars=n_bars)
-    except Exception as e:
-        return False, "", 0, f"{tf_name} error: {str(e)[:60]}"
+    df_new = None
+    last_err = ""
+    for attempt in range(2):
+        try:
+            df_new = tv.get_hist(symbol=sym, exchange='NSE', interval=interval, n_bars=n_bars)
+            if df_new is not None and not df_new.empty:
+                break
+        except Exception as e:
+            last_err = str(e)[:60]
+        if attempt == 0:
+            time.sleep(0.3)
         
     if df_new is None or df_new.empty:
-        return False, "", 0, f"{tf_name}: No data returned from NSE"
+        err_msg = f"{tf_name} error: {last_err}" if last_err else f"{tf_name}: No data returned from NSE"
+        return False, "", 0, err_msg
         
     df_new = df_new.reset_index()
     if 'datetime' not in df_new.columns:
@@ -326,7 +334,7 @@ def sync_timeframe_data(tv, sym, tf_name, interval, full_bars, sync_mode="increm
         return True, detail, new_bars_count, None
 
 
-def run_stock_download(selected_symbols, download_daily=True, download_weekly=True, download_monthly=True, sleep_sec=0.3, sync_mode="incremental"):
+def run_stock_download(selected_symbols, download_daily=True, download_weekly=True, download_monthly=True, sleep_sec=0.3, sync_mode="incremental", container=None):
     """
     Downloads historical OHLCV data using TvDatafeed, directly saves as Parquet,
     and updates both local and deployment folders. Tracks successes and failures.
@@ -349,8 +357,9 @@ def run_stock_download(selected_symbols, download_daily=True, download_weekly=Tr
             os.makedirs(DEPLOY_STOCK_MONTHLY_DIR, exist_ok=True)
     
     total = len(selected_symbols)
-    progress_bar = st.progress(0.0)
-    status_text = st.empty()
+    c = container if container is not None else st
+    progress_bar = c.progress(0.0)
+    status_text = c.empty()
     
     success_list = []
     failed_list = []
@@ -546,16 +555,57 @@ def render_downloader_section(is_subtab=False):
     est_time = len(target_symbols) * est_per_stock / 60
     st.info(f"📋 Target: **{len(target_symbols)}** stocks ({dl_tf}) | Mode: **{'Partial Diff' if mode_arg == 'incremental' else 'Full'}** | Estimated runtime: ~{est_time:.1f} minutes.")
     
-    col_btn, col_retry = st.columns([2.0, 2.0])
+    prev_failed_df = st.session_state.get('last_download_failed', pd.DataFrame())
+    has_prev_failed = not prev_failed_df.empty and 'Symbol' in prev_failed_df.columns
+    failed_syms_count = len(prev_failed_df) if has_prev_failed else 0
+
+    col_btn, col_retry = st.columns([1.8, 1.8])
     with col_btn:
         btn_start = st.button("🚀 Start Automated Download & Sync", type="primary", key="btn_sec4_start")
-    
+    with col_retry:
+        if has_prev_failed:
+            btn_retry_top = st.button(f"🔄 Re-try {failed_syms_count} Failed Stocks Only", key="btn_sec4_retry_top")
+        else:
+            btn_retry_top = False
+
+    # Check if download should run
+    should_run = False
+    run_symbols = []
     if btn_start:
-        is_d = "Daily" in dl_tf or "All 3" in dl_tf
-        is_w = "Weekly" in dl_tf or "All 3" in dl_tf
-        is_m = "Monthly" in dl_tf or "All 3" in dl_tf
-        run_stock_download(target_symbols, download_daily=is_d, download_weekly=is_w, download_monthly=is_m, sleep_sec=pause_sec, sync_mode=mode_arg)
-        
+        should_run = True
+        run_symbols = target_symbols
+    elif btn_retry_top:
+        should_run = True
+        run_symbols = prev_failed_df['Symbol'].tolist()
+    elif st.session_state.get('trigger_retry_failed', False):
+        st.session_state['trigger_retry_failed'] = False
+        if has_prev_failed:
+            should_run = True
+            run_symbols = prev_failed_df['Symbol'].tolist()
+
+    if should_run and run_symbols:
+        # Clear previous reports from session_state immediately so they DO NOT show stale / duplicate data below
+        st.session_state.pop('last_download_success', None)
+        st.session_state.pop('last_download_failed', None)
+
+        st.markdown("---")
+        exec_container = st.container()
+        with exec_container:
+            st.markdown(f"#### ⏳ Synchronizing **{len(run_symbols)}** Stocks...")
+            is_d = "Daily" in dl_tf or "All 3" in dl_tf
+            is_w = "Weekly" in dl_tf or "All 3" in dl_tf
+            is_m = "Monthly" in dl_tf or "All 3" in dl_tf
+            run_stock_download(
+                run_symbols,
+                download_daily=is_d,
+                download_weekly=is_w,
+                download_monthly=is_m,
+                sleep_sec=pause_sec,
+                sync_mode=mode_arg,
+                container=exec_container
+            )
+        st.rerun()
+
     # Display Success & Failure Reports
     if 'last_download_success' in st.session_state or 'last_download_failed' in st.session_state:
         df_succ = st.session_state.get('last_download_success', pd.DataFrame())
@@ -577,14 +627,14 @@ def render_downloader_section(is_subtab=False):
         
         with tab_f:
             if not df_fail.empty:
+                col_tab_h1, col_tab_h2 = st.columns([3, 1.5])
+                with col_tab_h1:
+                    st.caption("Review failed or skipped stocks below:")
+                with col_tab_h2:
+                    if st.button(f"🔄 Re-try {len(df_fail)} Failed Stocks", key="btn_retry_fail_tab"):
+                        st.session_state['trigger_retry_failed'] = True
+                        st.rerun()
                 st.dataframe(df_fail, width="stretch", hide_index=True)
-                failed_syms_list = df_fail['Symbol'].tolist()
-                if st.button(f"🔄 Re-try {len(failed_syms_list)} Failed Stocks Only", key="btn_retry_fail"):
-                    is_d = "Daily" in dl_tf or "All 3" in dl_tf
-                    is_w = "Weekly" in dl_tf or "All 3" in dl_tf
-                    is_m = "Monthly" in dl_tf or "All 3" in dl_tf
-                    run_stock_download(failed_syms_list, download_daily=is_d, download_weekly=is_w, download_monthly=is_m, sleep_sec=pause_sec, sync_mode=mode_arg)
-                    st.rerun()
             else:
                 st.success("🎉 All stocks downloaded and synced with 0 errors!")
                 
