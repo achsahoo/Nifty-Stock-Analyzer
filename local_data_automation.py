@@ -1123,16 +1123,17 @@ def create_data_zip_bytes(include_nifty=True, include_stocks=True):
 
 
 def render_data_sync_zip_section(is_subtab=False):
-    """Renders Cloud ⇄ Local ZIP data transfer and Git Protection UI."""
+    """Renders Data Backup, ZIP Transfer, and Git Sync UI."""
     if not is_subtab:
-        st.header("📦 Cloud ⇄ Local Data Backup & Synchronization")
+        st.header("📦 Market Data Backup & ZIP Transfer")
     else:
-        st.subheader("📦 Cloud ⇄ Local Data Sync (ZIP Backup & Git Protection)")
+        st.subheader("📦 Market Data Backup & ZIP Transfer")
         
     st.markdown("""
-    Easily transfer updated parquet data between **Streamlit Cloud** and your **Local PC** without risking Git overwrites:
-    - **Step 1 (On Streamlit Cloud):** After downloading fresh data in Section 3, generate and download the Data ZIP.
-    - **Step 2 (On Local PC):** Upload the ZIP here to instantly apply the updated parquets to your local environment.
+    Export or import your complete market datasets as a compressed ZIP archive:
+    - **Export to ZIP:** Package all NIFTY 50 and stock parquet files into a single ZIP archive for offline backup.
+    - **Import from ZIP:** Extract and apply a previously exported data archive directly to the `data/` folder.
+    - **GitHub Sync:** When you download fresh data locally, simply run `git add data/`, `git commit`, and `git push` to keep GitHub and Streamlit Cloud permanently updated.
     """)
     
     col_exp, col_imp = st.columns(2)
@@ -1192,63 +1193,6 @@ def render_data_sync_zip_section(is_subtab=False):
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ Failed to extract archive: {e}")
-                        
-    # Git Protection Helper
-    st.markdown("---")
-    st.markdown("#### 🛡️ Git Protection Status (Safe Mode)")
-    st.markdown("""
-    When **Safe Mode** is active, all 1,505 parquet files in `data/` are marked as `assume-unchanged` in Git.
-    This guarantees that whenever you run `git add .` and `git push`, your local files will **NEVER** overwrite newer data on GitHub or Streamlit Cloud!
-    """)
-    
-    # Check lock status
-    try:
-        res_v = subprocess.check_output(["git", "ls-files", "-v", "data/"], cwd=BASE_DIR, text=True)
-        locked_cnt = sum(1 for l in res_v.splitlines() if l and l[0].islower())
-        total_cnt = len(res_v.splitlines())
-    except Exception:
-        locked_cnt = 0
-        total_cnt = 0
-        
-    g_col1, g_col2 = st.columns([3.5, 2.5])
-    with g_col1:
-        if locked_cnt > 0:
-            st.markdown(f"""
-            <div style="background: rgba(0, 210, 106, 0.08); border: 1px solid rgba(0, 210, 106, 0.3); padding: 10px 14px; border-radius: 8px;">
-                <strong style="color: #00d26a; font-size: 14px;">🟢 SAFE MODE IS ACTIVE ({locked_cnt} / {total_cnt} Files Protected)</strong><br>
-                <span style="font-size: 12px; color: #cbd5e1;">Local parquet modifications will be completely ignored by Git. Your code commits are safe to push!</span>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div style="background: rgba(244, 63, 94, 0.08); border: 1px solid rgba(244, 63, 94, 0.3); padding: 10px 14px; border-radius: 8px;">
-                <strong style="color: #f43f5e; font-size: 14px;">⚠️ SAFE MODE IS OFF ({locked_cnt} / {total_cnt} Files Protected)</strong><br>
-                <span style="font-size: 12px; color: #cbd5e1;">Warning: Staging all files might push older local data to GitHub and reset Streamlit Cloud.</span>
-            </div>
-            """, unsafe_allow_html=True)
-            
-    with g_col2:
-        btn_lock_c1, btn_lock_c2 = st.columns(2)
-        with btn_lock_c1:
-            if st.button("🔒 Turn On Safe Mode", key="btn_ui_lock"):
-                try:
-                    import manage_git_data
-                    manage_git_data.lock_data()
-                    st.success("Safe mode activated!")
-                    time.sleep(0.5)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        with btn_lock_c2:
-            if st.button("🔓 Prepare to Push Data", key="btn_ui_unlock"):
-                try:
-                    import manage_git_data
-                    manage_git_data.unlock_data()
-                    st.warning("Data unlocked for pushing.")
-                    time.sleep(0.5)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
 
 
 # =============================================================
@@ -1264,7 +1208,7 @@ def render_unified_downloader_section():
     d_tab1, d_tab2, d_tab3 = st.tabs([
         "⚡ NIFTY 50 Index & Spot (1-Min, Daily, Weekly)",
         "🏢 NIFTY 500 Equities Batch Downloader (500 Stocks)",
-        "📦 Cloud ⇄ Local Sync (ZIP Backup & Git Safe Mode)"
+        "📦 Data Backup & Transfer (ZIP Export / Import)"
     ])
     
     with d_tab1:

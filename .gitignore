@@ -6,7 +6,3 @@ __pycache__/
 *.log
 .DS_Store
 scratch/
-# data/  # Temporarily un-ignored to push data
-
-
-# data/  # Temporarily un-ignored to push data
