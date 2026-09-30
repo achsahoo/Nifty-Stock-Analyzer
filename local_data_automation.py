@@ -63,7 +63,7 @@ if not os.path.exists(NIFTY500_CSV_PATH):
 TV_USERNAME = 'viline9842@adambra.com'
 TV_PASSWORD = 'Trade@!751024'
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def get_nifty500_symbols():
     if os.path.exists(NIFTY500_CSV_PATH):
         try:
@@ -110,13 +110,22 @@ def get_parquet_latest_date(filepath):
 
 
 def get_dataset_overview_metrics():
-    """Returns total available parquet files and latest date from benchmark symbols."""
+    """Returns total available parquet files matching active symbols and latest date from benchmark symbols."""
     target_dir = LOCAL_STOCK_DAILY_DIR
+    target_symbols = get_nifty500_symbols()
+    total_target = len(target_symbols)
+
     if not os.path.exists(target_dir):
-        return {"count": 0, "latest_date": None, "sample_sym": None}
+        return {"count": 0, "total_target": total_target, "latest_date": None, "sample_sym": None, "orphaned_symbols": []}
     files = [f for f in os.listdir(target_dir) if f.endswith("_daily_data_raw.parquet")]
     if not files:
-        return {"count": 0, "latest_date": None, "sample_sym": None}
+        return {"count": 0, "total_target": total_target, "latest_date": None, "sample_sym": None, "orphaned_symbols": []}
+
+    active_sym_set = set(target_symbols)
+    existing_sym_set = set(f.replace("_daily_data_raw.parquet", "") for f in files)
+    matched_syms = active_sym_set.intersection(existing_sym_set)
+    orphaned_syms = sorted(list(existing_sym_set - active_sym_set))
+
     benchmarks = ["RELIANCE", "INFY", "TCS", "HDFCBANK", "ICICIBANK", "SBIN"]
     latest_dt = None
     found_sym = None
@@ -131,7 +140,13 @@ def get_dataset_overview_metrics():
         sample_p = os.path.join(target_dir, files[0])
         latest_dt = get_parquet_latest_date(sample_p)
         found_sym = files[0].replace("_daily_data_raw.parquet", "")
-    return {"count": len(files), "latest_date": latest_dt, "sample_sym": found_sym}
+    return {
+        "count": len(matched_syms),
+        "total_target": total_target,
+        "latest_date": latest_dt,
+        "sample_sym": found_sym,
+        "orphaned_symbols": orphaned_syms
+    }
 
 
 def calculate_bars_to_fetch(last_dt, timeframe="daily", full_bars_count=8000):
@@ -415,10 +430,12 @@ def render_downloader_section(is_subtab=False):
     now_date = pd.Timestamp.now().date()
     latest_dt = overview.get("latest_date")
     total_files = overview.get("count", 0)
+    total_target = overview.get("total_target", len(get_nifty500_symbols()))
+    orphaned_syms = overview.get("orphaned_symbols", [])
     
     col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
     with col_stat1:
-        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Parquet Files</span><div class='metric-value' style='color:#38bdf8;'>{total_files} / 500</div><span style='font-size:11px;color:#94a3b8;'>Available Stocks</span></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class='metric-card'><span class='metric-label'>Parquet Files</span><div class='metric-value' style='color:#38bdf8;'>{total_files} / {total_target}</div><span style='font-size:11px;color:#94a3b8;'>Active Equities Synced</span></div>""", unsafe_allow_html=True)
     with col_stat2:
         date_str = latest_dt.strftime('%d-%b-%Y') if latest_dt is not None else "No data"
         st.markdown(f"""<div class='metric-card'><span class='metric-label'>Dataset Last Date</span><div class='metric-value' style='color:#a78bfa;'>{date_str}</div><span style='font-size:11px;color:#94a3b8;'>Sample: {overview.get('sample_sym', 'N/A')}</span></div>""", unsafe_allow_html=True)
@@ -441,6 +458,30 @@ def render_downloader_section(is_subtab=False):
             health_sub = "No local parquets detected"
         st.markdown(f"""<div class='metric-card'><span class='metric-label'>Sync Health</span><div class='metric-value' style='color:{health_color};'>{health_txt}</div><span style='font-size:11px;color:#94a3b8;'>{health_sub}</span></div>""", unsafe_allow_html=True)
         
+    if orphaned_syms:
+        c_orph1, c_orph2 = st.columns([3, 1])
+        with c_orph1:
+            st.info(f"💡 Found **{len(orphaned_syms)}** legacy parquet file(s) on disk for symbols no longer in `ind_nifty500list.csv`: `{', '.join(orphaned_syms)}`.")
+        with c_orph2:
+            if st.button("🧹 Clean Legacy Files", key="btn_clean_orphaned"):
+                cleaned = []
+                for s in orphaned_syms:
+                    for tf in ["daily", "weekly", "monthly"]:
+                        for d in [
+                            LOCAL_STOCK_DAILY_DIR if tf=="daily" else (LOCAL_STOCK_WEEKLY_DIR if tf=="weekly" else LOCAL_STOCK_MONTHLY_DIR),
+                            ALT_SYNC_DAILY if tf=="daily" else (ALT_SYNC_WEEKLY if tf=="weekly" else ALT_SYNC_MONTHLY)
+                        ]:
+                            p = os.path.join(d, f"{s}_{tf}_data_raw.parquet")
+                            if os.path.exists(p):
+                                try:
+                                    os.remove(p)
+                                    cleaned.append(os.path.basename(p))
+                                except Exception:
+                                    pass
+                st.success(f"Cleaned up {len(cleaned)} legacy parquet files! App refreshed.")
+                st.cache_data.clear()
+                st.rerun()
+
     st.markdown("<br>", unsafe_allow_html=True)
     
     all_symbols = get_nifty500_symbols()

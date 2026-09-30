@@ -43,7 +43,7 @@ NIFTY50_CONSTITUENTS = [
 # =============================================================
 # DATA LOADERS & CACHING
 # =============================================================
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=60)
 def load_metadata():
     """Loads symbol, company name, and industry mapping from ind_nifty500list.csv."""
     if os.path.exists(CSV_PATH):
@@ -72,9 +72,12 @@ def load_all_monthly_stocks_df():
 
     dfs = []
     nifty50_set = set(NIFTY50_CONSTITUENTS)
+    valid_symbols = set(sym_to_company.keys()) if sym_to_company else None
 
     for f in files:
         sym = os.path.basename(f).replace("_monthly_data_raw.parquet", "")
+        if valid_symbols is not None and sym not in valid_symbols:
+            continue
         ind = sym_to_industry.get(sym, "Other")
         comp = sym_to_company.get(sym, sym)
         is_n50 = sym in nifty50_set
