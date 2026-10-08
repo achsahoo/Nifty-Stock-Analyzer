@@ -1205,19 +1205,47 @@ def render_unified_downloader_section():
     Downloads directly from TradingView, converts in-memory to **Apache Parquet**, and automatically synchronizes to local and deployment data directories.
     """)
     
-    d_tab1, d_tab2, d_tab3 = st.tabs([
-        "⚡ NIFTY 50 Index & Spot (1-Min, Daily, Weekly)",
+    subtab_options = [
         "🏢 NIFTY 500 Equities Batch Downloader (500 Stocks)",
+        "⚡ NIFTY 50 Index & Spot (1-Min, Daily, Weekly)",
         "📦 Data Backup & Transfer (ZIP Export / Import)"
-    ])
+    ]
     
-    with d_tab1:
-        render_nifty_downloader_section(is_subtab=True)
+    if "sec3_active_subtab" not in st.session_state:
+        st.session_state["sec3_active_subtab"] = subtab_options[0]
         
-    with d_tab2:
-        render_downloader_section(is_subtab=True)
+    # Stateful sub-tab selector: guarantees user stays on their selected downloader across reruns and downloads!
+    if hasattr(st, "segmented_control"):
+        selected = st.segmented_control(
+            "Downloader Terminal Selector",
+            options=subtab_options,
+            default=st.session_state["sec3_active_subtab"],
+            key="sec3_nav_segmented",
+            label_visibility="collapsed"
+        )
+        if selected:
+            st.session_state["sec3_active_subtab"] = selected
+    else:
+        curr_idx = subtab_options.index(st.session_state["sec3_active_subtab"]) if st.session_state["sec3_active_subtab"] in subtab_options else 0
+        selected = st.radio(
+            "Downloader Terminal Selector",
+            options=subtab_options,
+            index=curr_idx,
+            horizontal=True,
+            key="sec3_nav_radio",
+            label_visibility="collapsed"
+        )
+        if selected:
+            st.session_state["sec3_active_subtab"] = selected
 
-    with d_tab3:
+    active_subtab = st.session_state["sec3_active_subtab"]
+    st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+    
+    if active_subtab == "🏢 NIFTY 500 Equities Batch Downloader (500 Stocks)":
+        render_downloader_section(is_subtab=True)
+    elif active_subtab == "⚡ NIFTY 50 Index & Spot (1-Min, Daily, Weekly)":
+        render_nifty_downloader_section(is_subtab=True)
+    elif active_subtab == "📦 Data Backup & Transfer (ZIP Export / Import)":
         render_data_sync_zip_section(is_subtab=True)
 
 
