@@ -689,14 +689,10 @@ def render_seasonality_section():
         nifty_matrix = build_year_matrix(df_nifty)
         if not nifty_matrix.empty:
             styled_df = nifty_matrix.reset_index()
-            styled_df['year'] = styled_df['year'].astype(str)
-            for c in MONTH_NAMES + ['Full Year']:
-                if c in styled_df.columns:
-                    styled_df[c] = styled_df[c].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-")
-            year_cfg = {"year": st.column_config.TextColumn("📌 Year", pinned=True)}
+            year_cfg = {"year": st.column_config.NumberColumn("📌 Year", format="%d", pinned=True)}
             for m in MONTH_NAMES:
-                year_cfg[m] = st.column_config.TextColumn(m)
-            year_cfg["Full Year"] = st.column_config.TextColumn("Full Year")
+                year_cfg[m] = st.column_config.NumberColumn(m, format="%+.2f%%")
+            year_cfg["Full Year"] = st.column_config.NumberColumn("Full Year", format="%+.2f%%")
             st.dataframe(styled_df, column_config=year_cfg, width="stretch", hide_index=True)
 
     # =============================================================
@@ -825,15 +821,15 @@ def render_seasonality_section():
                         display_sec_table[m_name] = col_vals
 
                     display_sec_table["Total Months"] = sec_merged["total_months"]
-                    display_sec_table["Positive Months"] = sec_merged.apply(lambda r: f"{r['pos_months_cnt']}🟢 ({r['overall_pos_pct']:.1f}%)", axis=1)
-                    display_sec_table["Negative Months"] = sec_merged.apply(lambda r: f"{r['neg_months_cnt']}🔴 ({100.0 - r['overall_pos_pct']:.1f}%)", axis=1)
+                    display_sec_table["Positive Months"] = sec_merged["pos_months_cnt"]
+                    display_sec_table["Negative Months"] = sec_merged["neg_months_cnt"]
                     display_sec_table["Positive %"] = sec_merged["overall_pos_pct"].round(1)
 
                 sec_col_cfg = {
                     "Sector": st.column_config.TextColumn("📌 Sector", pinned=True, help="NSE Industry Sector"),
                     "Total Months": st.column_config.NumberColumn("Total Mths", format="%d", help="Total sector months evaluated"),
-                    "Positive Months": st.column_config.TextColumn("🟢 Positive", help="Total positive months count and percentage"),
-                    "Negative Months": st.column_config.TextColumn("🔴 Negative", help="Total negative months count and percentage"),
+                    "Positive Months": st.column_config.NumberColumn("🟢 Positive", format="%d", help="Total positive months count"),
+                    "Negative Months": st.column_config.NumberColumn("🔴 Negative", format="%d", help="Total negative months count"),
                     "Positive %": st.column_config.ProgressColumn("Positive %", min_value=0, max_value=100, format="%.1f%%", help="Overall positive frequency progress bar")
                 }
                 for m_n in MONTH_NAMES:
@@ -944,16 +940,16 @@ def render_seasonality_section():
                                     col_vals.append(f"{t} ({p}🟢 {p_pct:.0f}%, {n}🔴 {n_pct:.0f}%)")
                         display_stk_table[m_name] = col_vals
                     display_stk_table["Total Months"] = stk_sec_merged["total_months"]
-                    display_stk_table["Positive Months"] = stk_sec_merged.apply(lambda r: f"{r['pos_months_cnt']}🟢 ({r['overall_pos_pct']:.1f}%)", axis=1)
-                    display_stk_table["Negative Months"] = stk_sec_merged.apply(lambda r: f"{r['neg_months_cnt']}🔴 ({100.0 - r['overall_pos_pct']:.1f}%)", axis=1)
+                    display_stk_table["Positive Months"] = stk_sec_merged["pos_months_cnt"]
+                    display_stk_table["Negative Months"] = stk_sec_merged["neg_months_cnt"]
                     display_stk_table["Positive %"] = stk_sec_merged["overall_pos_pct"].round(1)
 
                 stk_drill_col_cfg = {
                     "Stock": st.column_config.TextColumn("📌 Stock", pinned=True, help="Stock ticker symbol"),
                     "Company Name": st.column_config.TextColumn("Company Name", help="Company Name"),
                     "Total Months": st.column_config.NumberColumn("Total Mths", format="%d"),
-                    "Positive Months": st.column_config.TextColumn("🟢 Positive"),
-                    "Negative Months": st.column_config.TextColumn("🔴 Negative"),
+                    "Positive Months": st.column_config.NumberColumn("🟢 Positive", format="%d"),
+                    "Negative Months": st.column_config.NumberColumn("🔴 Negative", format="%d"),
                     "Positive %": st.column_config.ProgressColumn("Positive %", min_value=0, max_value=100, format="%.1f%%")
                 }
                 for m_n in MONTH_NAMES:
@@ -998,16 +994,16 @@ def render_seasonality_section():
                     "Sector / Industry": sec_stats['industry'],
                     "Stocks in Sector": sec_stats['stocks_in_sector'],
                     "Total Evaluated Months": sec_stats['sample_candles'],
-                    "Positive Months": sec_stats.apply(lambda r: f"{r['pos_candles']}🟢 ({r['pos_pct']:.1f}%)", axis=1),
-                    "Negative Months": sec_stats.apply(lambda r: f"{r['neg_candles']}🔴 ({100.0 - r['pos_pct']:.1f}%)", axis=1),
+                    "Positive Months": sec_stats['pos_candles'],
+                    "Negative Months": sec_stats['neg_candles'],
                     "Positive %": sec_stats['pos_pct'].round(1)
                 })
                 sec_single_cfg = {
                     "Sector / Industry": st.column_config.TextColumn("📌 Sector", pinned=True),
                     "Stocks in Sector": st.column_config.NumberColumn("Stocks in Sector", format="%d"),
                     "Total Evaluated Months": st.column_config.NumberColumn("Total Mths", format="%d"),
-                    "Positive Months": st.column_config.TextColumn("🟢 Positive"),
-                    "Negative Months": st.column_config.TextColumn("🔴 Negative"),
+                    "Positive Months": st.column_config.NumberColumn("🟢 Positive", format="%d"),
+                    "Negative Months": st.column_config.NumberColumn("🔴 Negative", format="%d"),
                     "Positive %": st.column_config.ProgressColumn("Positive %", min_value=0, max_value=100, format="%.1f%%")
                 }
                 st.dataframe(show_sec_single_df, column_config=sec_single_cfg, width="stretch", hide_index=True)
@@ -1029,17 +1025,17 @@ def render_seasonality_section():
                 show_drill = pd.DataFrame({
                     "Symbol": drill_stock_stats['symbol'],
                     "Company Name": drill_stock_stats['company_name'],
-                    "Total Years": drill_stock_stats['years'].apply(lambda x: f"{x} Yrs"),
-                    "Positive Months": drill_stock_stats.apply(lambda r: f"{r['pos_count']}🟢 ({r['pos_pct']:.1f}%)", axis=1),
-                    "Negative Months": drill_stock_stats.apply(lambda r: f"{r['neg_count']}🔴 ({100.0 - r['pos_pct']:.1f}%)", axis=1),
+                    "Total Years": drill_stock_stats['years'],
+                    "Positive Months": drill_stock_stats['pos_count'],
+                    "Negative Months": drill_stock_stats['neg_count'],
                     "Positive %": drill_stock_stats['pos_pct'].round(1)
                 })
                 drill_single_cfg = {
                     "Symbol": st.column_config.TextColumn("📌 Symbol", pinned=True),
                     "Company Name": st.column_config.TextColumn("Company Name"),
-                    "Total Years": st.column_config.TextColumn("Total Years"),
-                    "Positive Months": st.column_config.TextColumn("🟢 Positive"),
-                    "Negative Months": st.column_config.TextColumn("🔴 Negative"),
+                    "Total Years": st.column_config.NumberColumn("Total Years", format="%d Yrs"),
+                    "Positive Months": st.column_config.NumberColumn("🟢 Positive", format="%d"),
+                    "Negative Months": st.column_config.NumberColumn("🔴 Negative", format="%d"),
                     "Positive %": st.column_config.ProgressColumn("Positive %", min_value=0, max_value=100, format="%.1f%%")
                 }
                 st.markdown(f"**Constituent Stocks of `{chosen_ind_drill}` in {chosen_sec_month_name} ({len(show_drill)} Stocks):**")
@@ -1346,19 +1342,19 @@ def render_seasonality_section():
                         display_matrix[m_name] = col_vals
 
                     display_matrix["Total Months"] = merged_matrix["total_months"]
-                    display_matrix["Positive Months"] = merged_matrix.apply(lambda r: f"{r['pos_months_cnt']}🟢 ({r['overall_pos_pct']:.1f}%)", axis=1)
-                    display_matrix["Negative Months"] = merged_matrix.apply(lambda r: f"{r['neg_months_cnt']}🔴 ({100.0 - r['overall_pos_pct']:.1f}%)", axis=1)
+                    display_matrix["Positive Months"] = merged_matrix["pos_months_cnt"]
+                    display_matrix["Negative Months"] = merged_matrix["neg_months_cnt"]
                     display_matrix["Positive %"] = merged_matrix["overall_pos_pct"].round(1)
-                    display_matrix["Overall Avg Move"] = merged_matrix["overall_avg_move"].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-")
+                    display_matrix["Overall Avg Move"] = merged_matrix["overall_avg_move"].round(2)
                     display_matrix["Type / Sector"] = merged_matrix["Type / Sector"]
 
                 matrix_col_cfg = {
                     "Name": st.column_config.TextColumn("📌 Name", pinned=True, help="Asset Name (Benchmark / Sector / Stock) - Pinned for horizontal scroll"),
                     "Total Months": st.column_config.NumberColumn("Total Mths", format="%d", help="Total historical evaluated months"),
-                    "Positive Months": st.column_config.TextColumn("🟢 Positive", help="Historical positive count and win percentage"),
-                    "Negative Months": st.column_config.TextColumn("🔴 Negative", help="Historical negative count and loss percentage"),
+                    "Positive Months": st.column_config.NumberColumn("🟢 Positive", format="%d", help="Historical positive count"),
+                    "Negative Months": st.column_config.NumberColumn("🔴 Negative", format="%d", help="Historical negative count"),
                     "Positive %": st.column_config.ProgressColumn("Positive %", min_value=0, max_value=100, format="%.1f%%", help="Overall positive frequency progress bar"),
-                    "Overall Avg Move": st.column_config.TextColumn("Overall Avg Move", help="Average monthly percentage return across history"),
+                    "Overall Avg Move": st.column_config.NumberColumn("Overall Avg Move", format="%+.2f%%", help="Average monthly percentage return across history"),
                     "Type / Sector": st.column_config.TextColumn("Category / Sector", help="Asset type or market sector")
                 }
                 for m_n in MONTH_NAMES:
@@ -1463,22 +1459,31 @@ def render_seasonality_section():
                     "Symbol": month_agg['symbol'],
                     "Company Name": month_agg['company_name'],
                     "Sector": month_agg['industry'],
-                    "Average Move (%)": month_agg['avg_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
-                    "Median Move (%)": month_agg['median_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
-                    "Total Years": month_agg['sample_years'].apply(lambda x: f"{x} Yrs"),
-                    "Positive Months": month_agg.apply(lambda r: f"{r['pos_count']}🟢 ({r['pos_pct']:.1f}%)", axis=1),
-                    "Negative Months": month_agg.apply(lambda r: f"{r['neg_count']}🔴 ({100.0 - r['pos_pct']:.1f}%)", axis=1),
+                    "Average Move (%)": month_agg['avg_move'].round(2),
+                    "Median Move (%)": month_agg['median_move'].round(2),
+                    "Total Years": month_agg['sample_years'],
+                    "Positive Months": month_agg['pos_count'],
+                    "Negative Months": month_agg['neg_count'],
                     "Positive %": month_agg['pos_pct'].round(1),
-                    "Avg Up Move (%)": month_agg['avg_up_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
-                    "Avg Down Move (%)": month_agg['avg_down_move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
-                    "Best Historical Gain": month_agg['max_gain'].apply(lambda x: f"{x:+.1f}%" if pd.notna(x) else "-"),
-                    "Max Drawdown": month_agg['max_drop'].apply(lambda x: f"{x:+.1f}%" if pd.notna(x) else "-")
+                    "Avg Up Move (%)": month_agg['avg_up_move'].round(2),
+                    "Avg Down Move (%)": month_agg['avg_down_move'].round(2),
+                    "Best Historical Gain": month_agg['max_gain'].round(1),
+                    "Max Drawdown": month_agg['max_drop'].round(1)
                 })
                 single_col_cfg = {
                     "Symbol": st.column_config.TextColumn("📌 Symbol", pinned=True),
                     "Company Name": st.column_config.TextColumn("Company Name"),
                     "Sector": st.column_config.TextColumn("Sector"),
-                    "Positive %": st.column_config.ProgressColumn("Positive %", min_value=0, max_value=100, format="%.1f%%")
+                    "Average Move (%)": st.column_config.NumberColumn("Average Move (%)", format="%+.2f%%", help="Mean percentage return in this month"),
+                    "Median Move (%)": st.column_config.NumberColumn("Median Move (%)", format="%+.2f%%", help="Median percentage return in this month"),
+                    "Total Years": st.column_config.NumberColumn("Total Years", format="%d Yrs", help="Number of historical sample years"),
+                    "Positive Months": st.column_config.NumberColumn("🟢 Pos Mths", format="%d", help="Count of positive years"),
+                    "Negative Months": st.column_config.NumberColumn("🔴 Neg Mths", format="%d", help="Count of negative years"),
+                    "Positive %": st.column_config.ProgressColumn("Positive %", min_value=0, max_value=100, format="%.1f%%", help="Percentage of years closing green"),
+                    "Avg Up Move (%)": st.column_config.NumberColumn("Avg Up Move (%)", format="%+.2f%%", help="Average return in positive years"),
+                    "Avg Down Move (%)": st.column_config.NumberColumn("Avg Down Move (%)", format="%+.2f%%", help="Average return in negative years"),
+                    "Best Historical Gain": st.column_config.NumberColumn("Best Gain (%)", format="%+.1f%%", help="Maximum historical single-month gain"),
+                    "Max Drawdown": st.column_config.NumberColumn("Max Drawdown (%)", format="%+.1f%%", help="Worst historical single-month drop")
                 }
                 st.dataframe(show_single_df, column_config=single_col_cfg, width="stretch", hide_index=True)
 
@@ -1558,19 +1563,32 @@ def render_seasonality_section():
                 show_stk_df = pd.DataFrame({
                     "Month": stock_stats['Month_Full'],
                     "Sample Years": stock_stats['Total_Years'],
-                    "Positive Months": stock_stats.apply(lambda r: f"{r['Pos_Count']}🟢 ({r['Pos_Pct']:.1f}%)", axis=1),
-                    "Negative Months": stock_stats.apply(lambda r: f"{r['Neg_Count']}🔴 ({r['Neg_Pct']:.1f}%)", axis=1),
+                    "Positive Months": stock_stats['Pos_Count'],
+                    "Negative Months": stock_stats['Neg_Count'],
                     "Positive %": stock_stats['Pos_Pct'].round(1),
-                    "Average Move (%)": stock_stats['Avg_Move'].apply(lambda x: f"{x:+.2f}%"),
-                    "Median Move (%)": stock_stats['Median_Move'].apply(lambda x: f"{x:+.2f}%"),
-                    "Avg Up Move (%)": stock_stats['Avg_Up_Move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
-                    "Avg Down Move (%)": stock_stats['Avg_Down_Move'].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-"),
-                    "Best Year Gain": stock_stats.apply(lambda r: f"{r['Best_Move']:+.1f}% ({r['Best_Year']})", axis=1),
-                    "Max Drawdown": stock_stats.apply(lambda r: f"{r['Worst_Move']:+.1f}% ({r['Worst_Year']})", axis=1)
+                    "Average Move (%)": stock_stats['Avg_Move'].round(2),
+                    "Median Move (%)": stock_stats['Median_Move'].round(2),
+                    "Avg Up Move (%)": stock_stats['Avg_Up_Move'].round(2),
+                    "Avg Down Move (%)": stock_stats['Avg_Down_Move'].round(2),
+                    "Best Move (%)": stock_stats['Best_Move'].round(1),
+                    "Best Year": stock_stats['Best_Year'],
+                    "Worst Move (%)": stock_stats['Worst_Move'].round(1),
+                    "Worst Year": stock_stats['Worst_Year']
                 })
                 stk_summary_cfg = {
                     "Month": st.column_config.TextColumn("📌 Month", pinned=True),
-                    "Positive %": st.column_config.ProgressColumn("Positive %", min_value=0, max_value=100, format="%.1f%%")
+                    "Sample Years": st.column_config.NumberColumn("Sample Years", format="%d Yrs"),
+                    "Positive Months": st.column_config.NumberColumn("🟢 Pos Mths", format="%d"),
+                    "Negative Months": st.column_config.NumberColumn("🔴 Neg Mths", format="%d"),
+                    "Positive %": st.column_config.ProgressColumn("Positive %", min_value=0, max_value=100, format="%.1f%%"),
+                    "Average Move (%)": st.column_config.NumberColumn("Average Move (%)", format="%+.2f%%"),
+                    "Median Move (%)": st.column_config.NumberColumn("Median Move (%)", format="%+.2f%%"),
+                    "Avg Up Move (%)": st.column_config.NumberColumn("Avg Up Move (%)", format="%+.2f%%"),
+                    "Avg Down Move (%)": st.column_config.NumberColumn("Avg Down Move (%)", format="%+.2f%%"),
+                    "Best Move (%)": st.column_config.NumberColumn("Best Move (%)", format="%+.1f%%"),
+                    "Best Year": st.column_config.NumberColumn("Best Year", format="%d"),
+                    "Worst Move (%)": st.column_config.NumberColumn("Max Drawdown (%)", format="%+.1f%%"),
+                    "Worst Year": st.column_config.NumberColumn("Worst Year", format="%d")
                 }
                 st.dataframe(show_stk_df, column_config=stk_summary_cfg, width="stretch", hide_index=True)
 
@@ -1587,12 +1605,8 @@ def render_seasonality_section():
                 stk_matrix = build_year_matrix(stock_pl_sub)
                 if not stk_matrix.empty:
                     s_df = stk_matrix.reset_index()
-                    s_df['year'] = s_df['year'].astype(str)
-                    for c in MONTH_NAMES + ['Full Year']:
-                        if c in s_df.columns:
-                            s_df[c] = s_df[c].apply(lambda x: f"{x:+.2f}%" if pd.notna(x) else "-")
-                    stk_yr_cfg = {"year": st.column_config.TextColumn("📌 Year", pinned=True)}
+                    stk_yr_cfg = {"year": st.column_config.NumberColumn("📌 Year", format="%d", pinned=True)}
                     for m in MONTH_NAMES:
-                        stk_yr_cfg[m] = st.column_config.TextColumn(m)
-                    stk_yr_cfg["Full Year"] = st.column_config.TextColumn("Full Year")
+                        stk_yr_cfg[m] = st.column_config.NumberColumn(m, format="%+.2f%%")
+                    stk_yr_cfg["Full Year"] = st.column_config.NumberColumn("Full Year", format="%+.2f%%")
                     st.dataframe(s_df, column_config=stk_yr_cfg, width="stretch", hide_index=True)

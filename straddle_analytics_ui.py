@@ -351,7 +351,15 @@ def render_straddle_analytics_section():
             st.plotly_chart(fig_decay, use_container_width=True)
 
             st.markdown("#### 📋 Detailed Time Window Breakdown Table")
-            st.dataframe(df_hourly, width="stretch", hide_index=True)
+            hourly_cfg = {
+                "Window": st.column_config.TextColumn("Window", pinned=True),
+                "Days": st.column_config.NumberColumn("Days", format="%d"),
+                "Decay Win Rate (%)": st.column_config.NumberColumn("Decay Win Rate (%)", format="%.1f%%"),
+                "Avg Decay (Pts)": st.column_config.NumberColumn("Avg Decay (Pts)", format="%.2f"),
+                "Avg Decay (%)": st.column_config.NumberColumn("Avg Decay (%)", format="%+.2f%%"),
+                "Median Decay (%)": st.column_config.NumberColumn("Median Decay (%)", format="%+.2f%%"),
+            }
+            st.dataframe(df_hourly, column_config=hourly_cfg, width="stretch", hide_index=True)
 
             st.info("""
             💡 **Key Quantitative Takeaways on Theta Decay:**
@@ -474,7 +482,14 @@ def render_straddle_analytics_section():
             st.plotly_chart(fig_cool, use_container_width=True)
 
             st.markdown("#### 📋 Spike Threshold & Re-Decay Audit Table")
-            st.dataframe(df_spikes, width="stretch", hide_index=True)
+            spikes_cfg = {
+                "Spike Threshold": st.column_config.TextColumn("Spike Threshold", pinned=True),
+                "Breach Sessions": st.column_config.NumberColumn("Breach Sessions", format="%d"),
+                "Frequency (% of Sessions)": st.column_config.NumberColumn("Frequency (%)", format="%.1f%%"),
+                "Cool-Down Win Rate (%)": st.column_config.NumberColumn("Cool-Down Win Rate (%)", format="%.1f%%"),
+                "Avg Final Decay (%)": st.column_config.NumberColumn("Avg Final Decay (%)", format="%+.2f%%"),
+            }
+            st.dataframe(df_spikes, column_config=spikes_cfg, width="stretch", hide_index=True)
 
             st.success("""
             🧠 **Actionable Probabilistic Insights for Stop Loss Strategy:**
@@ -517,7 +532,17 @@ def render_straddle_analytics_section():
                 </div>
                 """, unsafe_allow_html=True)
 
-                st.dataframe(df_entry, width="stretch", hide_index=True)
+                entry_cfg = {
+                    "Entry Time": st.column_config.TextColumn("Entry Time", pinned=True),
+                    "Sessions": st.column_config.NumberColumn("Sessions", format="%d"),
+                    "Win Rate (%)": st.column_config.NumberColumn("Win Rate (%)", format="%.1f%%"),
+                    "Avg Decay (Pts)": st.column_config.NumberColumn("Avg Decay (Pts)", format="%.2f"),
+                    "Avg Decay (%)": st.column_config.NumberColumn("Avg Decay (%)", format="%+.2f%%"),
+                    "Median Decay (%)": st.column_config.NumberColumn("Median Decay (%)", format="%+.2f%%"),
+                    "Median Spike (MAE %)": st.column_config.NumberColumn("Median Spike (MAE %)", format="%.2f%%"),
+                    "Profit Factor": st.column_config.NumberColumn("Profit Factor", format="%.2f"),
+                }
+                st.dataframe(df_entry, column_config=entry_cfg, width="stretch", hide_index=True)
 
         with subtab_sltgt:
             st.markdown("#### 🛡️ Stop Loss (%) vs Target (%) Optimization Grid")
@@ -537,10 +562,12 @@ def render_straddle_analytics_section():
                 win_pivot = df_grid.pivot(index='SL_Label', columns='Target_Label', values='Win Rate (%)')
 
                 st.markdown("##### 📊 Profit Factor Matrix (SL vs Target)")
-                st.dataframe(pf_pivot, width="stretch")
+                pf_col_cfg = {c: st.column_config.NumberColumn(str(c), format="%.2f") for c in pf_pivot.columns}
+                st.dataframe(pf_pivot, column_config=pf_col_cfg, width="stretch")
 
                 st.markdown("##### 🏆 Win Rate (%) Matrix (SL vs Target)")
-                st.dataframe(win_pivot, width="stretch")
+                win_col_cfg = {c: st.column_config.NumberColumn(str(c), format="%.1f%%") for c in win_pivot.columns}
+                st.dataframe(win_pivot, column_config=win_col_cfg, width="stretch")
 
                 best_config = df_grid.sort_values('Profit Factor', ascending=False).iloc[0]
                 st.success(f"""
@@ -556,7 +583,16 @@ def render_straddle_analytics_section():
 
             df_dte_comp = engine.get_dte_summary_stats()
             if not df_dte_comp.empty:
-                st.dataframe(df_dte_comp, width="stretch", hide_index=True)
+                dte_cfg = {
+                    "DTE": st.column_config.TextColumn("DTE", pinned=True),
+                    "Sessions": st.column_config.NumberColumn("Sessions", format="%d"),
+                    "Win Rate (%)": st.column_config.NumberColumn("Win Rate (%)", format="%.1f%%"),
+                    "Avg Decay (Pts)": st.column_config.NumberColumn("Avg Decay (Pts)", format="%.2f"),
+                    "Avg Decay (%)": st.column_config.NumberColumn("Avg Decay (%)", format="%+.2f%%"),
+                    "Median Decay (%)": st.column_config.NumberColumn("Median Decay (%)", format="%+.2f%%"),
+                    "Median Spike (MAE %)": st.column_config.NumberColumn("Median Spike (MAE %)", format="%.2f%%"),
+                }
+                st.dataframe(df_dte_comp, column_config=dte_cfg, width="stretch", hide_index=True)
 
                 st.info("""
                 📌 **DTE Behavior Insights:**

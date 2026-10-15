@@ -363,9 +363,9 @@ Average Range: <strong style="color: #f8fafc;">{stats['avg_range_pct']:.2f}%</st
             f"Close Below -{target_pct:.2f}% (Bearish)": f"{stats_daily['pct_below_neg']:.1f}% ({stats_daily['cnt_below_neg']:,})",
             f"Close Above -{target_pct:.2f}%": f"{stats_daily['pct_close_above_neg']:.1f}% ({stats_daily['cnt_close_above_neg']:,})",
             f"Within ±{target_pct:.2f}% Move": f"{stats_daily['pct_within_move']:.1f}% ({stats_daily['cnt_within_move']:,})",
-            f"Range ≤ {target_pct:.2f}%": f"{stats_daily['pct_within_range']:.1f}% ({stats_daily['cnt_within_range']:,})",
-            "Avg Range (%)": f"{stats_daily['avg_range_pct']:.2f}%",
-            "Median Range (%)": f"{stats_daily['median_range_pct']:.2f}%"
+            "Range ≤ {target_pct:.2f}%": f"{stats_daily['pct_within_range']:.1f}% ({stats_daily['cnt_within_range']:,})",
+            "Avg Range (%)": round(stats_daily['avg_range_pct'], 2),
+            "Median Range (%)": round(stats_daily['median_range_pct'], 2)
         },
         {
             "Timeframe": tf_w_name,
@@ -378,8 +378,8 @@ Average Range: <strong style="color: #f8fafc;">{stats['avg_range_pct']:.2f}%</st
             f"Close Above -{target_pct:.2f}%": f"{stats_weekly['pct_close_above_neg']:.1f}% ({stats_weekly['cnt_close_above_neg']:,})",
             f"Within ±{target_pct:.2f}% Move": f"{stats_weekly['pct_within_move']:.1f}% ({stats_weekly['cnt_within_move']:,})",
             f"Range ≤ {target_pct:.2f}%": f"{stats_weekly['pct_within_range']:.1f}% ({stats_weekly['cnt_within_range']:,})",
-            "Avg Range (%)": f"{stats_weekly['avg_range_pct']:.2f}%",
-            "Median Range (%)": f"{stats_weekly['median_range_pct']:.2f}%"
+            "Avg Range (%)": round(stats_weekly['avg_range_pct'], 2),
+            "Median Range (%)": round(stats_weekly['median_range_pct'], 2)
         },
         {
             "Timeframe": tf_m_name,
@@ -390,13 +390,18 @@ Average Range: <strong style="color: #f8fafc;">{stats['avg_range_pct']:.2f}%</st
             f"Low Touched ≤ -{target_pct:.2f}%": f"{stats_monthly['pct_low_breach_neg']:.1f}% ({stats_monthly['cnt_low_breach_neg']:,})",
             f"Close Below -{target_pct:.2f}% (Bearish)": f"{stats_monthly['pct_below_neg']:.1f}% ({stats_monthly['cnt_below_neg']:,})",
             f"Close Above -{target_pct:.2f}%": f"{stats_monthly['pct_close_above_neg']:.1f}% ({stats_monthly['cnt_close_above_neg']:,})",
-            f"Within ±{target_pct:.2f}% Move": f"{stats_monthly['pct_within_move']:.1f}% ({stats_monthly['cnt_within_move']:,})",
+            f"Within ±{target_pct:.2f}% Move": f"{stats_weekly['pct_within_move']:.1f}% ({stats_weekly['cnt_within_move']:,})",
             f"Range ≤ {target_pct:.2f}%": f"{stats_monthly['pct_within_range']:.1f}% ({stats_monthly['cnt_within_range']:,})",
-            "Avg Range (%)": f"{stats_monthly['avg_range_pct']:.2f}%",
-            "Median Range (%)": f"{stats_monthly['median_range_pct']:.2f}%"
+            "Avg Range (%)": round(stats_monthly['avg_range_pct'], 2),
+            "Median Range (%)": round(stats_monthly['median_range_pct'], 2)
         }
     ])
-    st.dataframe(comp_df, hide_index=True, width="stretch")
+    comp_col_cfg = {
+        "Total Periods": st.column_config.NumberColumn("Total Periods", format="%d"),
+        "Avg Range (%)": st.column_config.NumberColumn("Avg Range (%)", format="%.2f%%"),
+        "Median Range (%)": st.column_config.NumberColumn("Median Range (%)", format="%.2f%%")
+    }
+    st.dataframe(comp_df, column_config=comp_col_cfg, hide_index=True, width="stretch")
     
     # Drill-down Tabs for Distribution Charts
     st.markdown("---")
@@ -451,6 +456,19 @@ Average Range: <strong style="color: #f8fafc;">{stats['avg_range_pct']:.2f}%</st
     if is_expiry_mode:
         st.markdown("---")
         with st.expander("🔍 Inspect Expiry Cycles & Holiday Settlements Audit Ledger", expanded=True):
+            exp_col_cfg = {
+                'Cycle Start': st.column_config.TextColumn("Cycle Start", pinned=True),
+                'Expiry Date': st.column_config.TextColumn("Expiry Date"),
+                'Scheduled Expiry': st.column_config.TextColumn("Scheduled Expiry"),
+                'Settlement Status': st.column_config.TextColumn("Settlement Status"),
+                'Trading Days': st.column_config.NumberColumn("Trading Days", format="%d"),
+                'Cycle Open': st.column_config.NumberColumn("Cycle Open", format="₹%,.2f"),
+                'Cycle High': st.column_config.NumberColumn("Cycle High", format="₹%,.2f"),
+                'Cycle Low': st.column_config.NumberColumn("Cycle Low", format="₹%,.2f"),
+                'Expiry Close': st.column_config.NumberColumn("Expiry Close", format="₹%,.2f"),
+                'Range %': st.column_config.NumberColumn("Range %", format="%.2f%%"),
+                'Move %': st.column_config.NumberColumn("Move %", format="%+.2f%%")
+            }
             exp_tab1, exp_tab2 = st.tabs(["📆 Weekly Expiry Cycles", "🗓️ Monthly Expiry Cycles"])
             with exp_tab1:
                 df_w_exp = stats_weekly['df'].copy()
@@ -461,14 +479,14 @@ Average Range: <strong style="color: #f8fafc;">{stats['avg_range_pct']:.2f}%</st
                     'Scheduled Expiry': df_w_exp['sched_date'].dt.strftime('%Y-%m-%d'),
                     'Settlement Status': df_w_exp['is_shifted'].apply(lambda x: '⚠️ Holiday Shift (Preceding Trading Day)' if x else '✅ Normal Settlement'),
                     'Trading Days': df_w_exp['trading_days'],
-                    'Cycle Open': df_w_exp['open'].apply(lambda x: f"₹{x:,.2f}"),
-                    'Cycle High': df_w_exp['high'].apply(lambda x: f"₹{x:,.2f}"),
-                    'Cycle Low': df_w_exp['low'].apply(lambda x: f"₹{x:,.2f}"),
-                    'Expiry Close': df_w_exp['close'].apply(lambda x: f"₹{x:,.2f}"),
-                    'Range %': df_w_exp['range_pct'].apply(lambda x: f"{x:.2f}%"),
-                    'Move %': df_w_exp['move_pct'].apply(lambda x: f"{x:+.2f}%")
+                    'Cycle Open': df_w_exp['open'].round(2),
+                    'Cycle High': df_w_exp['high'].round(2),
+                    'Cycle Low': df_w_exp['low'].round(2),
+                    'Expiry Close': df_w_exp['close'].round(2),
+                    'Range %': df_w_exp['range_pct'].round(2),
+                    'Move %': df_w_exp['move_pct'].round(2)
                 })
-                st.dataframe(show_w, hide_index=True, width="stretch")
+                st.dataframe(show_w, column_config=exp_col_cfg, hide_index=True, width="stretch")
             with exp_tab2:
                 df_m_exp = stats_monthly['df'].copy()
                 st.markdown(f"**Itemized Monthly Expiry Cycles ({len(df_m_exp)} Contracts):**")
@@ -478,14 +496,14 @@ Average Range: <strong style="color: #f8fafc;">{stats['avg_range_pct']:.2f}%</st
                     'Scheduled Expiry': df_m_exp['sched_date'].dt.strftime('%Y-%m-%d'),
                     'Settlement Status': df_m_exp['is_shifted'].apply(lambda x: '⚠️ Holiday Shift (Preceding Trading Day)' if x else '✅ Normal Settlement'),
                     'Trading Days': df_m_exp['trading_days'],
-                    'Cycle Open': df_m_exp['open'].apply(lambda x: f"₹{x:,.2f}"),
-                    'Cycle High': df_m_exp['high'].apply(lambda x: f"₹{x:,.2f}"),
-                    'Cycle Low': df_m_exp['low'].apply(lambda x: f"₹{x:,.2f}"),
-                    'Expiry Close': df_m_exp['close'].apply(lambda x: f"₹{x:,.2f}"),
-                    'Range %': df_m_exp['range_pct'].apply(lambda x: f"{x:.2f}%"),
-                    'Move %': df_m_exp['move_pct'].apply(lambda x: f"{x:+.2f}%")
+                    'Cycle Open': df_m_exp['open'].round(2),
+                    'Cycle High': df_m_exp['high'].round(2),
+                    'Cycle Low': df_m_exp['low'].round(2),
+                    'Expiry Close': df_m_exp['close'].round(2),
+                    'Range %': df_m_exp['range_pct'].round(2),
+                    'Move %': df_m_exp['move_pct'].round(2)
                 })
-                st.dataframe(show_m, hide_index=True, width="stretch")
+                st.dataframe(show_m, column_config=exp_col_cfg, hide_index=True, width="stretch")
 
 # =============================================================
 # SECTION 2: FIRST-TOUCH STRETCH, FORWARD EXTENSIONS & REVERSALS
@@ -566,39 +584,47 @@ This engine anchors to that <strong>exact first-touch minute</strong> and evalua
         summary_comp_df = pd.DataFrame([
             {
                 "Timeframe": "📅 Daily",
-                "Total Periods": f"{c_d['total_periods']:,} Days",
+                "Total Periods": c_d['total_periods'],
                 "Benchmark Stretch": "±0.50%",
                 "Bullish Triggered (%)": f"{c_d['pos']['pct_of_all_periods']:.1f}% ({c_d['pos']['count']:,})",
-                "Avg Peak High": f"+{c_d['pos']['avg_peak_high']:.2f}%",
-                "Retraced 50% of Stretch (%)": f"{c_d['pos']['retrace_goal_pct']:.1f}%",
-                "Returned to Open (0%)": f"{c_d['pos']['back_to_open_pct']:.1f}%",
-                "Trend Close (%)": f"{c_d['pos']['closed_trend_pct']:.1f}%",
-                "Failed Reversal / Red (%)": f"{c_d['pos']['closed_red_pct']:.1f}%"
+                "Avg Peak High (%)": round(c_d['pos']['avg_peak_high'], 2),
+                "Retraced 50% of Stretch (%)": round(c_d['pos']['retrace_goal_pct'], 1),
+                "Returned to Open (0%)": round(c_d['pos']['back_to_open_pct'], 1),
+                "Trend Close (%)": round(c_d['pos']['closed_trend_pct'], 1),
+                "Failed Reversal / Red (%)": round(c_d['pos']['closed_red_pct'], 1)
             },
             {
                 "Timeframe": w_tf_label,
-                "Total Periods": f"{c_w['total_periods']:,} {c_w['unit_plural']}",
+                "Total Periods": c_w['total_periods'],
                 "Benchmark Stretch": "±1.50%",
                 "Bullish Triggered (%)": f"{c_w['pos']['pct_of_all_periods']:.1f}% ({c_w['pos']['count']:,})",
-                "Avg Peak High": f"+{c_w['pos']['avg_peak_high']:.2f}%",
-                "Retraced 50% of Stretch (%)": f"{c_w['pos']['retrace_goal_pct']:.1f}%",
-                "Returned to Open (0%)": f"{c_w['pos']['back_to_open_pct']:.1f}%",
-                "Trend Close (%)": f"{c_w['pos']['closed_trend_pct']:.1f}%",
-                "Failed Reversal / Red (%)": f"{c_w['pos']['closed_red_pct']:.1f}%"
+                "Avg Peak High (%)": round(c_w['pos']['avg_peak_high'], 2),
+                "Retraced 50% of Stretch (%)": round(c_w['pos']['retrace_goal_pct'], 1),
+                "Returned to Open (0%)": round(c_w['pos']['back_to_open_pct'], 1),
+                "Trend Close (%)": round(c_w['pos']['closed_trend_pct'], 1),
+                "Failed Reversal / Red (%)": round(c_w['pos']['closed_red_pct'], 1)
             },
             {
                 "Timeframe": m_tf_label,
-                "Total Periods": f"{c_m['total_periods']:,} {c_m['unit_plural']}",
+                "Total Periods": c_m['total_periods'],
                 "Benchmark Stretch": "±3.00%",
                 "Bullish Triggered (%)": f"{c_m['pos']['pct_of_all_periods']:.1f}% ({c_m['pos']['count']:,})",
-                "Avg Peak High": f"+{c_m['pos']['avg_peak_high']:.2f}%",
-                "Retraced 50% of Stretch (%)": f"{c_m['pos']['retrace_goal_pct']:.1f}%",
-                "Returned to Open (0%)": f"{c_m['pos']['back_to_open_pct']:.1f}%",
-                "Trend Close (%)": f"{c_m['pos']['closed_trend_pct']:.1f}%",
-                "Failed Reversal / Red (%)": f"{c_m['pos']['closed_red_pct']:.1f}%"
+                "Avg Peak High (%)": round(c_m['pos']['avg_peak_high'], 2),
+                "Retraced 50% of Stretch (%)": round(c_m['pos']['retrace_goal_pct'], 1),
+                "Returned to Open (0%)": round(c_m['pos']['back_to_open_pct'], 1),
+                "Trend Close (%)": round(c_m['pos']['closed_trend_pct'], 1),
+                "Failed Reversal / Red (%)": round(c_m['pos']['closed_red_pct'], 1)
             }
         ])
-        st.dataframe(summary_comp_df, hide_index=True, width="stretch")
+        sum_col_cfg = {
+            "Total Periods": st.column_config.NumberColumn("Total Periods", format="%d"),
+            "Avg Peak High (%)": st.column_config.NumberColumn("Avg Peak High (%)", format="%+.2f%%"),
+            "Retraced 50% of Stretch (%)": st.column_config.NumberColumn("Retraced 50% (%)", format="%.1f%%"),
+            "Returned to Open (0%)": st.column_config.NumberColumn("Returned to Open (%)", format="%.1f%%"),
+            "Trend Close (%)": st.column_config.NumberColumn("Trend Close (%)", format="%.1f%%"),
+            "Failed Reversal / Red (%)": st.column_config.NumberColumn("Failed Reversal (%)", format="%.1f%%")
+        }
+        st.dataframe(summary_comp_df, column_config=sum_col_cfg, hide_index=True, width="stretch")
     
     # Timeframe Selector
     tf_radio_options = [
